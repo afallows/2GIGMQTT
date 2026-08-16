@@ -1,0 +1,28 @@
+{
+  "title": "2GIG GC2 Panel",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Select a GC2 MQTT topic",
+        "description": "Normally the bridge is discovered automatically. Enter its complete root topic only when discovery is disabled.",
+        "data": {
+          "root_topic": "MQTT root topic"
+        },
+        "data_description": {
+          "root_topic": "For example: 2gig/gc2/gc2_bridge_aabbccddeeff"
+        }
+      },
+      "discovery_confirm": {
+        "title": "Add {name}",
+        "description": "Use the GC2 bridge publishing at `{topic}`? Its panel, zones, programmed names, diagnostics, and observed user IDs will be created automatically."
+      }
+    },
+    "error": {
+      "invalid_topic": "Enter one exact topic without MQTT wildcards."
+    },
+    "abort": {
+      "invalid_discovery": "The MQTT message was not a supported GC2 bridge manifest.",
+      "already_configured": "This GC2 bridge is already configured."
+    }
+  }
+}

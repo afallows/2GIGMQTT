@@ -1,12 +1,13 @@
 {
   "domain": "gc2_panel",
   "name": "2GIG GC2 Panel",
-  "codeowners": [],
+  "codeowners": ["@afallows"],
   "config_flow": true,
   "dependencies": ["mqtt"],
-  "documentation": "https://github.com/",
+  "documentation": "https://github.com/afallows/2GIGMQTT#home-assistant-gc2-integration",
   "integration_type": "device",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/afallows/2GIGMQTT/issues",
   "mqtt": ["2gig/gc2/discovery/+"],
   "requirements": [],
   "version": "0.1.0"

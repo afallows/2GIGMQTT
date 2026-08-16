@@ -253,7 +253,8 @@ preventing duplicate alarm entities.
 
 ## Home Assistant GC2 integration
 
-The project includes `home_assistant/custom_components/gc2_panel`. It treats the
+The project includes `custom_components/gc2_panel` in the root layout required
+by HACS. It treats the
 GC2 as the alarm engine and Home Assistant as its front end. After one bridge
 topic is selected it subscribes to that complete topic tree and automatically
 creates:
@@ -265,9 +266,11 @@ creates:
 - panel battery, firmware, UART, command-status, and console diagnostic sensors;
 - a diagnostic sensor for every GC2 user ID observed in panel activity.
 
-To install it, copy the `gc2_panel` directory to Home Assistant's
-`/config/custom_components/` directory and restart Home Assistant. MQTT must
-already be configured in Home Assistant. With integration discovery enabled in
+Install it through HACS by adding
+`https://github.com/afallows/2GIGMQTT` as a custom **Integration** repository.
+For a manual installation, copy `custom_components/gc2_panel` into Home
+Assistant's `/config/custom_components/` directory and restart Home Assistant.
+MQTT must already be configured in Home Assistant. With integration discovery enabled in
 the bridge portal, Home Assistant shows the MAC-identified GC2 under
 **Settings > Devices & services > Discovered**. Select it and confirm its MQTT
 topic. If discovery was disabled, choose **Add Integration > 2GIG GC2 Panel**

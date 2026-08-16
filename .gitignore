@@ -1,0 +1,13 @@
+# Captured GC2 console data can contain private sensor and user activity.
+logs/
+
+# Home Assistant/Python development artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Arduino local build output.
+build/
+*.bin
+*.elf
+*.map

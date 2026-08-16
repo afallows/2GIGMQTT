@@ -1,0 +1,13 @@
+{
+  "domain": "gc2_panel",
+  "name": "2GIG GC2 Panel",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["mqtt"],
+  "documentation": "https://github.com/",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "mqtt": ["2gig/gc2/discovery/+"],
+  "requirements": [],
+  "version": "0.1.0"
+}

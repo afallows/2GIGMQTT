@@ -23,6 +23,7 @@ class PanelBridge {
     String baudState() const;
     bool requestAlarmCommand(AlarmCommand command);
     bool requestZoneBypass(uint8_t zone, bool bypassed);
+    String debugUnlockState() const;
     const String& alarmCommandAction() const { return alarmCommandAction_; }
     const String& alarmCommandStatus() const { return alarmCommandStatus_; }
     const String& alarmCommandDetail() const { return alarmCommandDetail_; }
@@ -53,9 +54,7 @@ class PanelBridge {
         Idle,
         Unlocking,
         SendCommand,
-        WaitCommand,
-        SendRelock,
-        WaitRelock
+        WaitCommand
     };
 
     CredentialStore& credentials_;
@@ -84,6 +83,8 @@ class PanelBridge {
     uint32_t lastPanelCommandAt_ = 0;
     uint8_t identityAttempts_ = 0;
     uint8_t unlockAttempts_ = 0;
+    uint8_t unlockVerificationAttempts_ = 0;
+    uint32_t nextUnlockSupervisionAt_ = 0;
     uint32_t panelSerialNumber_ = 0;
     uint8_t panelMonth_ = 0;
     uint8_t panelDay_ = 0;
@@ -97,12 +98,13 @@ class PanelBridge {
     ClientAuthState clientAuthState_ = ClientAuthState::Disconnected;
     uint8_t failedPasswordAttempts_ = 0;
     bool suppressByteAfterCr_ = false;
-    // Monitor mode permits only the narrow zone-metadata poll. Every command
-    // attaches TX for the command bytes and releases it immediately afterward.
+    // Monitor mode permits supervised unlock, allow-listed MQTT control, and
+    // zone polling. Every command attaches TX only for its transmitted bytes.
     TxMode txMode_ = TxMode::Monitor;
     uint32_t nextZoneMetadataPollAt_ = 0;
+    uint32_t nextZoneStatePollAt_ = 0;
+    uint32_t nextZoneTroublePollAt_ = 0;
     AlarmControlPhase alarmControlPhase_ = AlarmControlPhase::Idle;
-    TxMode alarmPreviousTxMode_ = TxMode::Monitor;
     String alarmCommandText_;
     String alarmCommandAction_ = "none";
     String alarmCommandStatus_ = "idle";
@@ -127,13 +129,15 @@ class PanelBridge {
     void processPanelByte(uint8_t value);
     void inspectPanelLine(const String& line);
     void processUnlock();
+    void processUnlockSupervisor();
     void processAlarmControl();
     bool beginProtectedCommand(const String& action, const String& command);
     void setAlarmCommandStatus(const String& status, const String& detail);
-    void finishAlarmControl(bool relockVerified);
+    void finishAlarmControl();
     bool attachPanelTx();
     void releasePanelTx();
     bool sendPanelCommand(const String& command);
+    bool sendBridgeCommand(const String& command);
     bool sendMonitorCommand(const char* command);
     void processMonitorPolling();
     static uint32_t calculateUnlockCode(uint32_t serialNumber, uint8_t day,

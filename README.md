@@ -17,8 +17,11 @@ front end for the physical GC2 rather than creating a second alarm engine.
   until it sees usable panel traffic. Hardware measurements only create an
   ordered candidate list. Each candidate must then decode recognizable panel
   text before it becomes the active baud.
-- Defaults to **monitor mode** after baud detection. It sends only the
-  read-only `zone_info 1` query, first after 5 seconds and then every 6 hours.
+- Defaults to **monitor mode** after baud detection. It unlocks the debug
+  console, verifies it every 5 minutes, and automatically unlocks it again if
+  needed. It reads live zone state and trouble memory every 30 seconds, and
+  sends the larger read-only `zone_info 1` programming query after startup and
+  every 6 hours.
 - Decodes the panel's programmed `VoiceDesc` names and updates the retained
   MQTT inventory if a zone is renamed, enabled, disabled, or reprogrammed.
 - Publishes zone activity, panel state, backup-battery status, firmware data,
@@ -126,19 +129,20 @@ The ESP32 handles these local commands and never forwards them verbatim:
 
 | Command | Action |
 |---|---|
-| `/monitor` | Read-only monitor mode. Blocks maintenance input and immediately schedules a zone-programming refresh. |
-| `/listen on` | Strictly passive mode. Clears queued input and blocks **all** UART transmissions, including metadata polls. |
-| `/listen off` | Maintenance mode. Allows authenticated commands to reach the panel. |
-| `/unlock` | Schedules the protected automatic debug-unlock sequence. Use `/listen off` first or afterward to permit it to transmit. |
+| `/monitor` | Automatic-control monitor mode. Blocks arbitrary typed panel commands, resumes persistent debug-unlock supervision, and schedules a zone-programming refresh. |
+| `/listen on` | Strictly passive mode. Clears queued input and blocks **all** UART transmissions, including unlock checks and metadata polls. |
+| `/listen off` | Maintenance mode. Allows authenticated typed commands and resumes persistent debug-unlock supervision. |
+| `/unlock` | Immediately schedules the automatic debug-unlock sequence in monitor or maintenance mode. |
 | `/baud auto` | Stop the current UART and immediately restart automatic baud detection. |
 | `/baud 115200` | Immediately set the UART to the supplied hardware-valid baud rate. Any valid integer rate is accepted. |
 
 Normal typed panel commands are allowed only in maintenance mode and are paced
 at one command per second. Panel output continues to stream in every mode.
-The bridge starts in Monitor mode. It is safe from arbitrary maintenance input,
-but it is not zero-TX because it requests zone programming five seconds after
-baud validation and every six hours afterward. Use `/listen on` whenever the
-ESP32 must remain completely passive.
+The bridge starts in Monitor mode. It is safe from arbitrary typed maintenance
+input, but it is not zero-TX: it maintains debug access, requests zone
+programming, and can issue allow-listed MQTT control commands. Use `/listen on`
+whenever the ESP32 must remain completely passive; MQTT control is rejected
+until `/monitor` or `/listen off` restores transmission.
 
 GPIO6 starts and remains electrically high-impedance while listening and while
 baud candidates are validated. For a deliberate monitor or maintenance
@@ -194,8 +198,11 @@ running during the GC2's initial programming poll.
 
 A zone state payload includes `state` (`ON`, `OFF`, or `UNKNOWN`), programmed
 name, zone type, enabled/input fields, RF ID, raw panel values, last-seen
-uptime, and separate bypass fields. A bypassed open sensor remains `ON`; the
-bridge never hides an open contact by reporting it closed.
+uptime, per-zone `battery_known`/`battery_low` fields, and separate bypass
+fields. The bridge initializes state from the panel's read-only `zones` query,
+then conditions live RF packets and open/restore messages. A bypassed open
+sensor remains `ON`; the bridge never hides an open contact by reporting it
+closed.
 
 An observed-user payload contains the numeric GC2 user ID, its last reported
 action, origin, and bridge uptime. User `0` is the GC2 remote/system actor seen
@@ -214,12 +221,16 @@ ARM_AWAY
 DISARM
 ```
 
-The bridge temporarily enables TX, verifies the panel's daily debug unlock,
-sends the single allow-listed command (`arm_stay 0`, `arm_away 0`, or
-`disarm 0`), sends `lock 12345678`, and restores the previous monitor mode.
-The result is retained on `panel/command_status`. `submitted` means the panel
+After baud detection, the bridge obtains the panel's daily debug unlock and
+keeps that session available. It verifies `debug_lock_state` with `panel_misc`
+every 5 minutes and runs the full unlock sequence again if the panel reports
+locked; a failed attempt is retried after 30 seconds. MQTT control can therefore
+send its single allow-listed command (`arm_stay 0`, `arm_away 0`, or `disarm 0`)
+as soon as unlock is confirmed, without a per-command unlock/relock delay. The
+result is retained on `panel/command_status`. `submitted` means the panel
 command was transmitted; the actual result is determined only from subsequent
-console state output. Strict `/listen on` mode rejects MQTT control.
+console state output. Strict `/listen on` mode rejects MQTT control and pauses
+unlock supervision.
 
 Physical zone bypass uses `panel/bypass/set` with a non-retained JSON payload:
 
@@ -228,7 +239,7 @@ Physical zone bypass uses `panel/bypass/set` with a non-retained JSON payload:
 ```
 
 `false` requests an unbypass. Only zones 1 through 74 are accepted. Each
-request uses the same unlock, one-command, relock sequence and maps to the
+request waits for the shared persistent unlock if necessary, then maps to the
 panel's literal `bypass <zone>` or `unbypass <zone>` command. Stale retained
 alarm and bypass commands are deleted before the bridge subscribes.
 
@@ -238,8 +249,9 @@ as well. Publish `auto` or any hardware-valid integer baud to the `/set` topic
 to recover or override the connection remotely. External commands should not
 be retained; the bridge clears stale commands when connecting and then restores
 the current applied value.
-The Home Assistant integration exposes the applied UART baud as a diagnostic
-entity. Manual recovery remains available by publishing to the `/set` topic.
+The Home Assistant integration exposes the applied UART baud and persistent
+debug-unlock state as diagnostic entities. Manual baud recovery remains
+available by publishing to the `/set` topic.
 
 Serial Monitor prints each candidate as it is tested and the recognizable line
 that validates the selected rate. If a panel uses a different rate, set it
@@ -262,8 +274,10 @@ creates:
 - one `alarm_control_panel` for the physical GC2;
 - one `binary_sensor` for every active programmed zone, using the programmed
   name and appropriate device class;
+- one diagnostic low-battery binary sensor for every zone;
 - one physical bypass switch for every zone;
-- panel battery, firmware, UART, command-status, and console diagnostic sensors;
+- panel battery, firmware, UART, debug-unlock, command-status, and console
+  diagnostic sensors;
 - a diagnostic sensor for every GC2 user ID observed in panel activity.
 
 Install it through HACS by adding
@@ -299,9 +313,10 @@ Zone device classes are conditioned as follows:
 
 Home and Away arming, disarming, and bypass changes go to the actual GC2. The
 integration does not optimistically change state: it waits for the console to
-report what the panel really did. Debug access is temporarily unlocked for an
-allow-listed command and relocked by the ESP bridge afterward. An open zone
-continues to report open when physically bypassed; bypass is separate GC2 state.
+report what the panel really did. The ESP bridge maintains and periodically
+verifies debug access so allow-listed controls do not pay the full unlock delay
+for every action. An open zone continues to report open when physically
+bypassed; bypass is separate GC2 state.
 
 Alarmo is not required and should not be configured as a second independent
 alarm engine for the same system. The integration uses Home Assistant's standard
@@ -325,7 +340,9 @@ The provisioning network is open by design. Provision in a controlled location
 because anyone within radio range can submit new settings while it is active.
 The setup network is disabled after a successful connection.
 
-Maintenance mode exposes state-changing GC2 commands to an authenticated user.
-The pacing limit prevents overrunning the console but does not make dangerous
-panel commands safe. Keep deployed or monitored alarm services disconnected
-during bench work.
+Monitor and maintenance modes deliberately keep the GC2 debug console unlocked;
+`/listen on` is the only strict zero-transmit mode and pauses those checks.
+Maintenance mode additionally exposes state-changing GC2 commands to an
+authenticated user. The pacing limit prevents overrunning the console but does
+not make dangerous panel commands safe. Keep deployed or monitored alarm
+services disconnected during bench work.

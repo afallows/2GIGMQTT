@@ -149,6 +149,7 @@ void PanelBridge::loop() {
     if (panelReady()) {
         processPanelInput();
         processUnlock();
+        processUnlockSupervisor();
         processAlarmControl();
         processMonitorPolling();
     }
@@ -340,8 +341,13 @@ void PanelBridge::acceptCurrentBaudCandidate(const String& evidence) {
     baudState_ = BaudState::Ready;
     unlockPhase_ = UnlockPhase::NotStarted;
     nextUnlockActionAt_ = 0;
+    nextUnlockSupervisionAt_ =
+        millis() + AppConfig::kDebugUnlockInitialDelayMs;
     nextZoneMetadataPollAt_ =
         millis() + AppConfig::kZoneMetadataInitialDelayMs;
+    nextZoneStatePollAt_ = millis() + AppConfig::kZoneStateInitialDelayMs;
+    nextZoneTroublePollAt_ =
+        millis() + AppConfig::kZoneTroubleInitialDelayMs;
     panelLine_ = String();
     panelLine_.reserve(512);
 
@@ -368,7 +374,10 @@ void PanelBridge::restartBaudDetection() {
     commandQueue_.clear();
     unlockPhase_ = UnlockPhase::NotStarted;
     nextUnlockActionAt_ = 0;
+    nextUnlockSupervisionAt_ = 0;
     nextZoneMetadataPollAt_ = 0;
+    nextZoneStatePollAt_ = 0;
+    nextZoneTroublePollAt_ = 0;
     trialBaud_ = 0;
     validationLine_ = String();
 }
@@ -399,13 +408,18 @@ void PanelBridge::startPanelUart(uint32_t baud) {
 
     currentBaud_ = baud;
     baudState_ = BaudState::Ready;
-    // Startup blocks maintenance commands but permits the narrow, read-only
+    // Monitor mode maintains debug access and permits the narrow, read-only
     // zone metadata poll. Strict zero-transmit mode remains available through
-    // /listen on. Unlock is an explicit maintenance action through /unlock.
+    // /listen on.
     unlockPhase_ = UnlockPhase::NotStarted;
     nextUnlockActionAt_ = 0;
+    nextUnlockSupervisionAt_ =
+        millis() + AppConfig::kDebugUnlockInitialDelayMs;
     nextZoneMetadataPollAt_ =
         millis() + AppConfig::kZoneMetadataInitialDelayMs;
+    nextZoneStatePollAt_ = millis() + AppConfig::kZoneStateInitialDelayMs;
+    nextZoneTroublePollAt_ =
+        millis() + AppConfig::kZoneTroubleInitialDelayMs;
     Serial.print(F("[uart] Panel UART set to "));
     Serial.print(baud);
     Serial.println(F(" baud, 8N1."));
@@ -491,13 +505,19 @@ void PanelBridge::inspectPanelLine(const String& line) {
 
     if (line.indexOf("is not available when debug is locked") >= 0) {
         debugLockState_ = 1;
-        if (unlockPhase_ == UnlockPhase::Complete) {
+        if (unlockPhase_ == UnlockPhase::Complete ||
+            unlockPhase_ == UnlockPhase::Failed ||
+            unlockPhase_ == UnlockPhase::NotStarted) {
             unlockPhase_ = UnlockPhase::NotStarted;
-            sendClientStatus("Panel is locked; use /unlock for maintenance access.");
+            nextUnlockSupervisionAt_ = millis();
+            sendClientStatus(
+                "Panel debug access is locked; automatic re-unlock scheduled.");
         }
     }
     if (lowercase.indexOf("debug is now locked") >= 0) {
         debugLockState_ = 1;
+        unlockPhase_ = UnlockPhase::NotStarted;
+        nextUnlockSupervisionAt_ = millis();
     }
 }
 
@@ -517,7 +537,12 @@ void PanelBridge::releasePanelTx() {
 }
 
 bool PanelBridge::sendPanelCommand(const String& command) {
-    if (txMode_ != TxMode::Maintenance || !panelReady() ||
+    if (txMode_ != TxMode::Maintenance) return false;
+    return sendBridgeCommand(command);
+}
+
+bool PanelBridge::sendBridgeCommand(const String& command) {
+    if (txMode_ == TxMode::Passive || !panelReady() ||
         millis() - lastPanelCommandAt_ < AppConfig::kCommandIntervalMs) {
         return false;
     }
@@ -532,28 +557,34 @@ bool PanelBridge::sendPanelCommand(const String& command) {
 }
 
 bool PanelBridge::sendMonitorCommand(const char* command) {
-    if (txMode_ != TxMode::Monitor || !panelReady() || command == nullptr ||
-        millis() - lastPanelCommandAt_ < AppConfig::kCommandIntervalMs) {
-        return false;
-    }
-    if (!attachPanelTx()) return false;
-    panel_.print(command);
-    panel_.write('\r');
-    panel_.flush(true);
-    releasePanelTx();
-    lastPanelCommandAt_ = millis();
-    return true;
+    if (txMode_ != TxMode::Monitor || command == nullptr) return false;
+    return sendBridgeCommand(String(command));
 }
 
 void PanelBridge::processMonitorPolling() {
     if (txMode_ != TxMode::Monitor ||
-        !deadlineReached(nextZoneMetadataPollAt_)) {
+        alarmControlPhase_ != AlarmControlPhase::Idle ||
+        (unlockPhase_ != UnlockPhase::NotStarted &&
+         unlockPhase_ != UnlockPhase::Complete &&
+         unlockPhase_ != UnlockPhase::Failed)) {
         return;
     }
-    if (sendMonitorCommand("zone_info 1")) {
+
+    if (deadlineReached(nextZoneMetadataPollAt_) &&
+        sendMonitorCommand("zone_info 1")) {
         nextZoneMetadataPollAt_ = millis() + AppConfig::kZoneMetadataRefreshMs;
         sendClientStatus(
             "Refreshing read-only zone names and programming metadata.");
+        return;
+    }
+    if (deadlineReached(nextZoneStatePollAt_) &&
+        sendMonitorCommand("zones")) {
+        nextZoneStatePollAt_ = millis() + AppConfig::kZoneStateRefreshMs;
+        return;
+    }
+    if (deadlineReached(nextZoneTroublePollAt_) &&
+        sendMonitorCommand("trouble_memory")) {
+        nextZoneTroublePollAt_ = millis() + AppConfig::kZoneTroubleRefreshMs;
     }
 }
 
@@ -590,7 +621,7 @@ void PanelBridge::processUnlock() {
         case UnlockPhase::Failed: return;
 
         case UnlockPhase::SendCalibration:
-            if (sendPanelCommand("cal_values")) {
+            if (sendBridgeCommand("cal_values")) {
                 unlockPhase_ = UnlockPhase::WaitCalibration;
                 nextUnlockActionAt_ = millis() + 6500;
             }
@@ -602,7 +633,7 @@ void PanelBridge::processUnlock() {
             break;
 
         case UnlockPhase::SendBuildInfo:
-            if (sendPanelCommand("build_info")) {
+            if (sendBridgeCommand("build_info")) {
                 unlockPhase_ = UnlockPhase::WaitBuildInfo;
                 nextUnlockActionAt_ = millis() + 6000;
             }
@@ -614,7 +645,7 @@ void PanelBridge::processUnlock() {
             break;
 
         case UnlockPhase::SendRtc:
-            if (sendPanelCommand("rtc")) {
+            if (sendBridgeCommand("rtc")) {
                 unlockPhase_ = UnlockPhase::WaitRtc;
                 nextUnlockActionAt_ = millis() + 6500;
             }
@@ -634,9 +665,11 @@ void PanelBridge::processUnlock() {
                 nextUnlockActionAt_ = millis() + 3000;
             } else {
                 unlockPhase_ = UnlockPhase::Failed;
+                nextUnlockSupervisionAt_ =
+                    millis() + AppConfig::kDebugUnlockRetryIntervalMs;
                 Serial.println(F("[unlock] Could not obtain panel identity and RTC date."));
                 sendClientStatus(
-                    "Automatic unlock could not read the panel identity/date; manual console access is enabled.");
+                    "Automatic unlock could not read the panel identity/date; another attempt will be made in 30 seconds.");
             }
             break;
 
@@ -646,7 +679,7 @@ void PanelBridge::processUnlock() {
                 panelSerialNumber_, panelDay_, panelMonth_, panelYear_);
             snprintf(command, sizeof(command), "unlock %08lx",
                      static_cast<unsigned long>(code));
-            if (sendPanelCommand(command)) {
+            if (sendBridgeCommand(command)) {
                 debugLockState_ = -1;
                 ++unlockAttempts_;
                 unlockPhase_ = UnlockPhase::WaitUnlock;
@@ -663,7 +696,8 @@ void PanelBridge::processUnlock() {
             break;
 
         case UnlockPhase::SendVerification:
-            if (sendPanelCommand("panel_misc")) {
+            if (sendBridgeCommand("panel_misc")) {
+                ++unlockVerificationAttempts_;
                 unlockPhase_ = UnlockPhase::WaitVerification;
                 nextUnlockActionAt_ = millis() + 6000;
             }
@@ -672,23 +706,56 @@ void PanelBridge::processUnlock() {
         case UnlockPhase::WaitVerification:
             if (debugLockState_ == 2) {
                 unlockPhase_ = UnlockPhase::Complete;
+                unlockAttempts_ = 0;
+                unlockVerificationAttempts_ = 0;
+                nextUnlockSupervisionAt_ =
+                    millis() + AppConfig::kDebugUnlockCheckIntervalMs;
                 Serial.println(F("[unlock] Panel reports the maintenance console is unlocked."));
-                sendClientStatus("Panel maintenance console unlocked.");
+                sendClientStatus(
+                    "Panel maintenance console unlocked; persistent supervision active.");
             } else if (debugLockState_ == 1 && unlockAttempts_ < 3) {
                 unlockPhase_ = UnlockPhase::SendUnlock;
                 nextUnlockActionAt_ = millis() + 5000;
-            } else if (debugLockState_ < 0) {
-                unlockPhase_ = UnlockPhase::Complete;
-                Serial.println(F("[unlock] Unlock submitted; panel state could not be verified."));
-                sendClientStatus("Unlock submitted; panel verification was inconclusive.");
+            } else if (debugLockState_ < 0 &&
+                       unlockVerificationAttempts_ < 3) {
+                unlockPhase_ = UnlockPhase::SendVerification;
+                nextUnlockActionAt_ = millis() + 2000;
             } else {
                 unlockPhase_ = UnlockPhase::Failed;
-                Serial.println(F("[unlock] Panel remained locked after three attempts."));
+                nextUnlockSupervisionAt_ =
+                    millis() + AppConfig::kDebugUnlockRetryIntervalMs;
+                Serial.println(F("[unlock] Persistent debug unlock could not be verified."));
                 sendClientStatus(
-                    "Automatic unlock failed; manual console access is enabled.");
+                    "Automatic unlock failed; another attempt will be made in 30 seconds.");
             }
             break;
     }
+}
+
+void PanelBridge::processUnlockSupervisor() {
+    if (txMode_ == TxMode::Passive ||
+        alarmControlPhase_ != AlarmControlPhase::Idle ||
+        !deadlineReached(nextUnlockSupervisionAt_)) {
+        return;
+    }
+    if (unlockPhase_ != UnlockPhase::NotStarted &&
+        unlockPhase_ != UnlockPhase::Complete &&
+        unlockPhase_ != UnlockPhase::Failed) {
+        return;
+    }
+
+    if (debugLockState_ == 2 && unlockPhase_ == UnlockPhase::Complete) {
+        debugLockState_ = -1;
+        unlockVerificationAttempts_ = 0;
+        unlockPhase_ = UnlockPhase::SendVerification;
+        nextUnlockActionAt_ = millis();
+        nextUnlockSupervisionAt_ = UINT32_MAX;
+        Serial.println(F("[unlock] Verifying persistent debug access."));
+        return;
+    }
+
+    scheduleAutomaticUnlock();
+    Serial.println(F("[unlock] Starting persistent debug unlock."));
 }
 
 bool PanelBridge::requestAlarmCommand(AlarmCommand command) {
@@ -736,25 +803,19 @@ bool PanelBridge::beginProtectedCommand(const String& action,
         setAlarmCommandStatus("rejected", "strict passive mode is active");
         return false;
     }
-    if (unlockPhase_ != UnlockPhase::NotStarted &&
-         unlockPhase_ != UnlockPhase::Complete &&
-         unlockPhase_ != UnlockPhase::Failed) {
-        setAlarmCommandStatus("rejected", "another maintenance action is active");
-        return false;
-    }
-
-    alarmPreviousTxMode_ = txMode_;
-    txMode_ = TxMode::Maintenance;
     alarmCommandTransmitted_ = false;
     if (unlockPhase_ == UnlockPhase::Complete && debugLockState_ == 2) {
         alarmControlPhase_ = AlarmControlPhase::SendCommand;
         nextAlarmControlActionAt_ = millis();
-        setAlarmCommandStatus("sending", "panel was already unlocked");
+        setAlarmCommandStatus("sending", "persistent debug unlock verified");
     } else {
-        scheduleAutomaticUnlock();
+        if (unlockPhase_ == UnlockPhase::NotStarted ||
+            unlockPhase_ == UnlockPhase::Failed) {
+            scheduleAutomaticUnlock();
+        }
         alarmControlPhase_ = AlarmControlPhase::Unlocking;
         nextAlarmControlActionAt_ = millis();
-        setAlarmCommandStatus("unlocking", "obtaining temporary debug access");
+        setAlarmCommandStatus("unlocking", "waiting for persistent debug access");
     }
     sendClientStatus(String("MQTT alarm action accepted: ") +
                      alarmCommandAction_ + '.');
@@ -776,45 +837,44 @@ void PanelBridge::processAlarmControl() {
                     alarmControlPhase_ = AlarmControlPhase::SendCommand;
                     setAlarmCommandStatus("sending", "debug unlock verified");
                 } else {
-                    alarmControlPhase_ = AlarmControlPhase::SendRelock;
+                    alarmControlPhase_ = AlarmControlPhase::Idle;
                     setAlarmCommandStatus("failed", "debug unlock could not be verified");
+                    alarmCommandText_ = String();
                 }
                 nextAlarmControlActionAt_ = millis();
             } else if (unlockPhase_ == UnlockPhase::Failed) {
-                alarmControlPhase_ = AlarmControlPhase::SendRelock;
+                alarmControlPhase_ = AlarmControlPhase::Idle;
                 nextAlarmControlActionAt_ = millis();
                 setAlarmCommandStatus("failed", "debug unlock failed");
+                alarmCommandText_ = String();
             }
             break;
 
         case AlarmControlPhase::SendCommand:
-            if (sendPanelCommand(alarmCommandText_)) {
+            if (unlockPhase_ != UnlockPhase::Complete ||
+                debugLockState_ != 2) {
+                if (unlockPhase_ == UnlockPhase::NotStarted ||
+                    unlockPhase_ == UnlockPhase::Failed) {
+                    scheduleAutomaticUnlock();
+                }
+                alarmControlPhase_ = AlarmControlPhase::Unlocking;
+                nextAlarmControlActionAt_ = millis();
+                setAlarmCommandStatus(
+                    "unlocking",
+                    "debug access changed before command transmission");
+                break;
+            }
+            if (sendBridgeCommand(alarmCommandText_)) {
                 parser_.noteBridgeCommand(alarmCommandAction_);
                 alarmCommandTransmitted_ = true;
                 alarmControlPhase_ = AlarmControlPhase::WaitCommand;
-                nextAlarmControlActionAt_ = millis() + 1500;
-                setAlarmCommandStatus("relocking", "alarm command submitted");
+                nextAlarmControlActionAt_ = millis() + 250;
+                setAlarmCommandStatus("submitted", "command sent with persistent debug access");
             }
             break;
 
         case AlarmControlPhase::WaitCommand:
-            alarmControlPhase_ = AlarmControlPhase::SendRelock;
-            nextAlarmControlActionAt_ = millis();
-            break;
-
-        case AlarmControlPhase::SendRelock:
-            debugLockState_ = -1;
-            if (sendPanelCommand("lock 12345678")) {
-                alarmControlPhase_ = AlarmControlPhase::WaitRelock;
-                nextAlarmControlActionAt_ = millis() + 4000;
-            }
-            break;
-
-        case AlarmControlPhase::WaitRelock:
-            if (debugLockState_ == 1 ||
-                deadlineReached(nextAlarmControlActionAt_)) {
-                finishAlarmControl(debugLockState_ == 1);
-            }
+            finishAlarmControl();
             break;
     }
 }
@@ -832,27 +892,33 @@ void PanelBridge::setAlarmCommandStatus(const String& status,
     Serial.println(detail);
 }
 
-void PanelBridge::finishAlarmControl(bool relockVerified) {
+void PanelBridge::finishAlarmControl() {
     releasePanelTx();
-    txMode_ = alarmPreviousTxMode_;
-    unlockPhase_ = UnlockPhase::NotStarted;
     alarmControlPhase_ = AlarmControlPhase::Idle;
     nextAlarmControlActionAt_ = 0;
 
     if (alarmCommandTransmitted_) {
-        setAlarmCommandStatus(
-            "submitted", relockVerified
-                             ? "command sent and debug relock verified"
-                             : "command sent; relock submitted but confirmation was not observed");
+        setAlarmCommandStatus("submitted",
+                              "command sent; panel state confirmation pending");
     } else {
-        setAlarmCommandStatus(
-            "failed", relockVerified
-                          ? "command was not sent; debug relock verified"
-                          : "command was not sent; relock confirmation was not observed");
+        setAlarmCommandStatus("failed", "command was not sent");
     }
     sendClientStatus(String("MQTT alarm action ") + alarmCommandAction_ +
                      ": " + alarmCommandStatus_ + ".");
     alarmCommandText_ = String();
+}
+
+String PanelBridge::debugUnlockState() const {
+    if (debugLockState_ == 2 && unlockPhase_ == UnlockPhase::Complete) {
+        return F("unlocked");
+    }
+    if (debugLockState_ == 1) return F("locked");
+    if (unlockPhase_ != UnlockPhase::NotStarted &&
+        unlockPhase_ != UnlockPhase::Complete &&
+        unlockPhase_ != UnlockPhase::Failed) {
+        return F("unlocking");
+    }
+    return F("unknown");
 }
 
 void PanelBridge::processServer() {
@@ -1012,7 +1078,7 @@ void PanelBridge::finishTelnetLine() {
                 txMode_ == TxMode::Passive
                     ? "Passive mode is active; all UART transmissions are blocked."
                     : txMode_ == TxMode::Monitor
-                          ? "Read-only monitor mode is active."
+                          ? "Monitor mode is active; debug access is supervised."
                           : "Maintenance transmission is enabled.");
         } else if (++failedPasswordAttempts_ >= 3) {
             client_.print(F("\r\nToo many failed attempts.\r\n"));
@@ -1067,25 +1133,31 @@ bool PanelBridge::processLocalCommand(const String& command) {
         txMode_ = TxMode::Monitor;
         commandQueue_.clear();
         nextZoneMetadataPollAt_ = millis();
+        nextZoneStatePollAt_ = millis();
+        nextZoneTroublePollAt_ = millis();
+        nextUnlockSupervisionAt_ = millis();
         sendClientStatus(
-            "Read-only monitor mode enabled; maintenance commands are blocked.");
+            "Monitor mode enabled; persistent unlock supervision and read-only polling are active.");
         return true;
     }
 
     if (normalized == "/listen off" ||
         normalized == "/mode maintenance") {
         txMode_ = TxMode::Maintenance;
+        nextUnlockSupervisionAt_ = millis();
         sendClientStatus(
-            "Maintenance mode enabled; authenticated UART commands are allowed.");
+            "Maintenance mode enabled; authenticated UART commands and persistent unlock supervision are active.");
         return true;
     }
 
     if (normalized == "/unlock") {
-        scheduleAutomaticUnlock();
-        sendClientStatus(
-            txMode_ == TxMode::Maintenance
-                ? "Automatic unlock scheduled."
-                : "Automatic unlock scheduled; use /listen off to enter maintenance mode.");
+        if (txMode_ == TxMode::Passive) {
+            sendClientStatus(
+                "Unlock blocked by strict passive mode; use /monitor or /listen off first.");
+        } else {
+            scheduleAutomaticUnlock();
+            sendClientStatus("Persistent automatic unlock scheduled.");
+        }
         return true;
     }
 
@@ -1126,8 +1198,10 @@ void PanelBridge::scheduleAutomaticUnlock() {
     debugLockState_ = -1;
     identityAttempts_ = 0;
     unlockAttempts_ = 0;
+    unlockVerificationAttempts_ = 0;
     unlockPhase_ = UnlockPhase::SendCalibration;
     nextUnlockActionAt_ = millis();
+    nextUnlockSupervisionAt_ = UINT32_MAX;
 }
 
 bool PanelBridge::userInputAllowed() const {

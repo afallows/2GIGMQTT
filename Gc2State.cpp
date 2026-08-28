@@ -32,6 +32,12 @@ void Gc2State::recordZonePacket(uint8_t number, uint32_t rfId,
     if (kind != Gc2ZoneKind::Unknown) target.kind = kind;
     target.revision = newRevision();
     if (metadataChanged) target.metadataRevision = newRevision();
+
+    // The GC2's normalized 345 MHz event byte uses bit 7 for the active/open
+    // condition and bit 3 for low battery. A supervisory packet therefore
+    // establishes current state even when no OPENED/RESTORED text followed it.
+    recordZoneState(number, (status & 0x80U) != 0);
+    recordZoneBattery(number, (status & 0x08U) != 0);
 }
 
 void Gc2State::recordZoneState(uint8_t number, bool open) {
@@ -49,6 +55,27 @@ void Gc2State::recordZoneState(uint8_t number, bool open) {
     event += number;
     event += F(",\"state\":\"");
     event += open ? F("open") : F("closed");
+    event += F(",\"uptime_ms\":");
+    event += millis();
+    event += '}';
+    queueEvent(event);
+}
+
+void Gc2State::recordZoneBattery(uint8_t number, bool low) {
+    if (number == 0 || number >= kMaxZones) return;
+    Gc2ZoneSnapshot& target = zones_[number];
+    const bool changed = !target.batteryKnown || target.batteryLow != low;
+    target.discovered = true;
+    target.batteryKnown = true;
+    target.batteryLow = low;
+    target.lastSeenMs = millis();
+    if (!changed) return;
+    target.revision = newRevision();
+
+    String event = F("{\"type\":\"zone_battery\",\"zone\":");
+    event += number;
+    event += F(",\"low\":");
+    event += low ? F("true") : F("false");
     event += F(",\"uptime_ms\":");
     event += millis();
     event += '}';

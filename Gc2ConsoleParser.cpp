@@ -86,6 +86,37 @@ bool Gc2ConsoleParser::parseZonePacket(const String& line) {
     return true;
 }
 
+bool Gc2ConsoleParser::parseZoneSnapshot(const String& line) {
+    if (!line.startsWith("Zone ")) return false;
+
+    unsigned int zone = 0;
+    if (sscanf(line.c_str(), "Zone %u", &zone) != 1 || zone == 0 ||
+        zone >= Gc2State::kMaxZones) {
+        return false;
+    }
+
+    // Output from the read-only `zones` command has a variable-width type
+    // column followed by one of these fixed state words.
+    if (line.indexOf(" CLOSED ") >= 0) {
+        state_.recordZoneState(static_cast<uint8_t>(zone), false);
+        state_.recordZoneBypass(static_cast<uint8_t>(zone), false, 0,
+                                "snapshot", "panel");
+        return true;
+    }
+    if (line.indexOf(" OPEN ") >= 0) {
+        state_.recordZoneState(static_cast<uint8_t>(zone), true);
+        state_.recordZoneBypass(static_cast<uint8_t>(zone), false, 0,
+                                "snapshot", "panel");
+        return true;
+    }
+    if (line.indexOf(" BYPASSED ") >= 0) {
+        state_.recordZoneBypass(static_cast<uint8_t>(zone), true, 0,
+                                "snapshot", "panel");
+        return true;
+    }
+    return false;
+}
+
 bool Gc2ConsoleParser::parseZoneState(const String& line) {
     const int marker = line.indexOf("Zone ");
     if (marker < 0) return false;
@@ -108,6 +139,29 @@ bool Gc2ConsoleParser::parseZoneState(const String& line) {
     state_.recordZoneState(static_cast<uint8_t>(zone), open);
     recentZone_ = static_cast<uint8_t>(zone);
     recentZoneAt_ = millis();
+    return true;
+}
+
+bool Gc2ConsoleParser::parseZoneTrouble(const String& line) {
+    String lowercase = line;
+    lowercase.toLowerCase();
+    if (lowercase.indexOf("low battery") < 0 ||
+        (line[0] != '#' && lowercase.indexOf("trouble_memory") < 0 &&
+         lowercase.indexOf("zone_in_trouble") < 0)) {
+        return false;
+    }
+
+    const int zoneMarker = lowercase.indexOf("zone ");
+    if (zoneMarker < 0) return false;
+    const int zone = lowercase.substring(zoneMarker + 5).toInt();
+    if (zone <= 0 || zone >= Gc2State::kMaxZones) return true;
+
+    // A queried trouble-memory row explicitly marks restored entries. Live
+    // add/event lines represent an active low-battery condition.
+    const bool restored = line[0] == '#' &&
+                          lowercase.indexOf(" not restored ") < 0 &&
+                          lowercase.indexOf(" restored ") >= 0;
+    state_.recordZoneBattery(static_cast<uint8_t>(zone), !restored);
     return true;
 }
 
@@ -411,7 +465,9 @@ void Gc2ConsoleParser::processLine(const String& input) {
 
     bool recognized = parseZoneInfo(line);
     if (!recognized) recognized = parseZonePacket(line);
+    if (!recognized) recognized = parseZoneSnapshot(line);
     if (!recognized) recognized = parseZoneState(line);
+    if (!recognized) recognized = parseZoneTrouble(line);
     if (!recognized) recognized = parseZoneBypass(line);
     if (!recognized) recognized = parseAlarmActivity(line);
     if (!recognized) recognized = parseAlarmState(line);

@@ -60,6 +60,7 @@ class MqttService {
     uint32_t publishedDiagnosticRevision_ = 0;
     uint32_t publishedAlarmCommandRevision_ = 0;
     String publishedBaudState_;
+    String publishedDebugUnlockState_;
 
     void connectIfNeeded();
     void onMessage(char* topic, uint8_t* payload, unsigned int length);

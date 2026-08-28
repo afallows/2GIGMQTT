@@ -6,7 +6,7 @@
 
 namespace {
 constexpr char kHomeAssistantStatusTopic[] = "homeassistant/status";
-constexpr char kFirmwareRelease[] = "0.4.0";
+constexpr char kFirmwareRelease[] = "0.6.0";
 constexpr char kTransportSchema[] = "gc2-mqtt-v1";
 constexpr char const* kBaseDiscoveryObjectIds[] = {
     "panel_state",   "battery_state", "battery_voltage",
@@ -246,6 +246,7 @@ void MqttService::resetPublishTracking() {
     publishedDiagnosticRevision_ = 0;
     publishedAlarmCommandRevision_ = 0;
     publishedBaudState_ = String();
+    publishedDebugUnlockState_ = String();
     nextDiagnosticAt_ = millis();
 }
 
@@ -330,10 +331,12 @@ void MqttService::publishNext() {
             return;
         }
     }
-    if (state_.diagnosticRevision() != publishedDiagnosticRevision_ &&
+    if ((state_.diagnosticRevision() != publishedDiagnosticRevision_ ||
+         bridge_.debugUnlockState() != publishedDebugUnlockState_) &&
         deadlineReached(nextDiagnosticAt_)) {
         if (publishDiagnostics()) {
             publishedDiagnosticRevision_ = state_.diagnosticRevision();
+            publishedDebugUnlockState_ = bridge_.debugUnlockState();
             nextDiagnosticAt_ = millis() +
                                 AppConfig::kMqttDiagnosticIntervalMs;
         }
@@ -429,7 +432,7 @@ bool MqttService::publishManifest() {
     payload += jsonEscape(rootTopic_);
     payload += F("\",\"bridge_firmware\":\"");
     payload += kFirmwareRelease;
-    payload += F("\",\"max_zones\":74,\"capabilities\":{\"alarm_control\":true,\"zone_bypass\":true,\"zone_inventory\":true,\"observed_users\":true,\"uart_baud_control\":true}}");
+    payload += F("\",\"max_zones\":74,\"capabilities\":{\"alarm_control\":true,\"zone_bypass\":true,\"zone_inventory\":true,\"zone_battery\":true,\"observed_users\":true,\"uart_baud_control\":true}}");
     if (!publishRetained("manifest", payload)) return false;
 
     // This stable discovery address lets Home Assistant offer the bridge even
@@ -805,7 +808,11 @@ bool MqttService::publishZoneState(uint8_t zoneNumber) {
     payload += hexValue(zone.rawStatus, 2);
     payload += F("\",\"raw_change\":\"");
     payload += hexValue(zone.rawStatusChange, 2);
-    payload += F("\",\"last_seen_ms\":");
+    payload += F("\",\"battery_known\":");
+    payload += zone.batteryKnown ? F("true") : F("false");
+    payload += F(",\"battery_low\":");
+    payload += zone.batteryLow ? F("true") : F("false");
+    payload += F(",\"last_seen_ms\":");
     payload += zone.lastSeenMs;
     payload += '}';
     if (!publishRetained(String("zone/") + number + "/state", payload)) {
@@ -850,6 +857,9 @@ bool MqttService::publishDiagnostics() {
     payload += state_.droppedEventCount();
     payload += F(",\"last_panel_line_ms\":");
     payload += state_.lastPanelLineMs();
+    payload += F(",\"debug_unlock\":\"");
+    payload += bridge_.debugUnlockState();
+    payload += '"';
     payload += '}';
     return publishRetained("diagnostic", payload);
 }

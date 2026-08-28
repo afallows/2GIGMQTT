@@ -22,6 +22,8 @@ struct Gc2ZoneSnapshot {
     uint32_t rfId = 0;
     uint8_t rawStatus = 0;
     uint8_t rawStatusChange = 0;
+    bool batteryKnown = false;
+    bool batteryLow = false;
     uint32_t lastSeenMs = 0;
     uint32_t revision = 0;
     uint32_t metadataRevision = 0;
@@ -39,6 +41,7 @@ class Gc2State {
     void recordZonePacket(uint8_t zone, uint32_t rfId, uint8_t status,
                           uint8_t statusChange, Gc2ZoneKind kind);
     void recordZoneState(uint8_t zone, bool open);
+    void recordZoneBattery(uint8_t zone, bool low);
     void recordZoneBypass(uint8_t zone, bool bypassed, uint8_t user,
                           const String& bypassType, const String& origin);
     void recordZoneName(uint8_t zone, const String& name);

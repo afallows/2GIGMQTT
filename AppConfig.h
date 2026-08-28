@@ -18,8 +18,15 @@ constexpr uint32_t kBaudDetectDelayMs = 120000;
 constexpr uint32_t kBaudRetryDelayMs = 2000;
 constexpr uint32_t kBaudValidationWindowMs = 60000;
 constexpr uint32_t kCommandIntervalMs = 1000;
+constexpr uint32_t kDebugUnlockInitialDelayMs = 1000;
+constexpr uint32_t kDebugUnlockCheckIntervalMs = 5UL * 60UL * 1000UL;
+constexpr uint32_t kDebugUnlockRetryIntervalMs = 30000;
 constexpr uint32_t kZoneMetadataInitialDelayMs = 5000;
 constexpr uint32_t kZoneMetadataRefreshMs = 6UL * 60UL * 60UL * 1000UL;
+constexpr uint32_t kZoneStateInitialDelayMs = 8000;
+constexpr uint32_t kZoneStateRefreshMs = 30000;
+constexpr uint32_t kZoneTroubleInitialDelayMs = 10000;
+constexpr uint32_t kZoneTroubleRefreshMs = 30000;
 
 constexpr uint32_t kMqttReconnectDelayMs = 5000;
 constexpr uint32_t kMqttPublishIntervalMs = 25;

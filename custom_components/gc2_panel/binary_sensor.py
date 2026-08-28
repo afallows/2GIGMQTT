@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import Gc2ConfigEntry
@@ -46,7 +47,12 @@ async def async_setup_entry(
         new = set(coordinator.data.zones) - known
         if new:
             known.update(new)
-            async_add_entities(Gc2Zone(coordinator, number) for number in sorted(new))
+            entities = []
+            for number in sorted(new):
+                entities.extend(
+                    (Gc2Zone(coordinator, number), Gc2ZoneBattery(coordinator, number))
+                )
+            async_add_entities(entities)
 
     add_new_zones()
     entry.async_on_unload(coordinator.async_add_listener(add_new_zones))
@@ -84,3 +90,43 @@ class Gc2Zone(Gc2Entity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {key: value for key, value in self.zone.items() if key != "state"}
+
+
+class Gc2ZoneBattery(Gc2Entity, BinarySensorEntity):
+    """Low-battery condition reported by one GC2 wireless zone."""
+
+    _attr_device_class = BinarySensorDeviceClass.BATTERY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, number: int) -> None:
+        super().__init__(coordinator)
+        self.number = number
+        self._attr_unique_id = (
+            f"{coordinator.root_topic.replace('/', '_')}_zone_{number:02d}_battery"
+        )
+
+    @property
+    def zone(self) -> dict[str, Any]:
+        return self.coordinator.data.zones.get(self.number, {})
+
+    @property
+    def name(self) -> str:
+        return f"{self.zone.get('name') or f'Zone {self.number}'} battery"
+
+    @property
+    def available(self) -> bool:
+        return super().available and bool(self.zone)
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.zone.get("battery_known", False):
+            return None
+        return bool(self.zone.get("battery_low", False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "zone": self.number,
+            "rf_id": self.zone.get("rf_id"),
+            "last_seen_ms": self.zone.get("last_seen_ms"),
+        }

@@ -28,7 +28,9 @@ class Gc2ConsoleParser {
     static String normalizeState(String value);
     static String collapseSpaces(String value);
     bool parseZonePacket(const String& line);
+    bool parseZoneSnapshot(const String& line);
     bool parseZoneState(const String& line);
+    bool parseZoneTrouble(const String& line);
     bool parseAlarmState(const String& line);
     bool parseAlarmActivity(const String& line);
     bool parseZoneBypass(const String& line);

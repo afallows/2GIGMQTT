@@ -44,6 +44,22 @@ def test_retained_inventory_rebuilds_panel() -> None:
     assert data.users[1]["last_action"] == "disarmed"
 
 
+def test_zone_battery_fields_are_retained_with_zone_state() -> None:
+    root = "2gig/gc2/bridge"
+    data = Gc2Snapshot()
+
+    assert data.apply_message(
+        root,
+        f"{root}/zone/07/state",
+        '{"state":"OFF","name":"Shed Door","battery_known":true,'
+        '"battery_low":true}',
+    )
+
+    assert data.zones[7]["state"] == "OFF"
+    assert data.zones[7]["battery_known"] is True
+    assert data.zones[7]["battery_low"] is True
+
+
 def test_empty_retained_payload_removes_disabled_zone() -> None:
     root = "2gig/gc2/bridge"
     data = Gc2Snapshot()

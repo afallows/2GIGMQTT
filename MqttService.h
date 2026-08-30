@@ -23,7 +23,7 @@ class MqttService {
 
   private:
     static constexpr uint8_t kLegacySensorDiscoveryCount = 10;
-    static constexpr uint8_t kBaseDiscoveryCount = 14;
+    static constexpr uint8_t kBaseDiscoveryCount = 15;
     static constexpr uint16_t kLegacyCleanupCount =
         kLegacySensorDiscoveryCount + (Gc2State::kMaxZones - 1) + 5 +
         (Gc2State::kMaxZones - 1);
@@ -47,6 +47,7 @@ class MqttService {
     String baudCommandTopic_;
     String alarmCommandTopic_;
     String bypassCommandTopic_;
+    String sounderVolumeCommandTopic_;
     uint8_t discoveryStage_ = 0;
     uint16_t legacyCleanupStage_ = kLegacyCleanupCount;
     uint16_t nativeCleanupStage_ = kNativeDiscoveryCleanupCount;
@@ -56,7 +57,13 @@ class MqttService {
     uint32_t publishedZoneRevision_[Gc2State::kMaxZones]{};
     uint32_t publishedAlarmRevision_ = 0;
     uint32_t publishedBatteryRevision_ = 0;
+    uint32_t publishedSounderVolumeRevision_ = 0;
     uint32_t publishedFirmwareRevision_ = 0;
+    uint32_t publishedTroubleRevision_ = 0;
+    uint32_t publishingTroubleRevision_ = 0;
+    uint8_t troublePublishStage_ = 0;
+    uint32_t publishedPanelSecurityRevision_ = 0;
+    uint32_t publishedAlarmMemoryRevision_ = 0;
     uint32_t publishedDiagnosticRevision_ = 0;
     uint32_t publishedAlarmCommandRevision_ = 0;
     String publishedBaudState_;
@@ -85,7 +92,12 @@ class MqttService {
     bool publishAlarmState();
     bool publishAlarmCommandStatus();
     bool publishBatteryState();
+    bool publishSounderVolumeState();
     bool publishFirmwareState();
+    bool publishTroubleSummary();
+    bool publishTroubleEntry(uint8_t slot);
+    bool publishPanelSecurityState();
+    bool publishAlarmMemoryState();
     bool publishZoneState(uint8_t zone);
     bool publishDiagnostics();
     bool publishBaudState();

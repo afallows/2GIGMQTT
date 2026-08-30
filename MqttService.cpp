@@ -6,7 +6,7 @@
 
 namespace {
 constexpr char kHomeAssistantStatusTopic[] = "homeassistant/status";
-constexpr char kFirmwareRelease[] = "0.6.0";
+constexpr char kFirmwareRelease[] = "0.8.0";
 constexpr char kTransportSchema[] = "gc2-mqtt-v1";
 constexpr char const* kBaseDiscoveryObjectIds[] = {
     "panel_state",   "battery_state", "battery_voltage",
@@ -58,6 +58,7 @@ void MqttService::reloadSettings() {
     baudCommandTopic_ = makeTopic("uart/baud/set");
     alarmCommandTopic_ = makeTopic("panel/set");
     bypassCommandTopic_ = makeTopic("panel/bypass/set");
+    sounderVolumeCommandTopic_ = makeTopic("panel/sounder_volume/set");
     if (settings_.enabled) {
         client_.setServer(settings_.host.c_str(), settings_.port);
         Serial.print(F("[mqtt] Configured broker "));
@@ -129,10 +130,12 @@ void MqttService::connectIfNeeded() {
     client_.publish(baudCommandTopic_.c_str(), "", true);
     client_.publish(alarmCommandTopic_.c_str(), "", true);
     client_.publish(bypassCommandTopic_.c_str(), "", true);
+    client_.publish(sounderVolumeCommandTopic_.c_str(), "", true);
     client_.subscribe(kHomeAssistantStatusTopic);
     client_.subscribe(baudCommandTopic_.c_str());
     client_.subscribe(alarmCommandTopic_.c_str());
     client_.subscribe(bypassCommandTopic_.c_str());
+    client_.subscribe(sounderVolumeCommandTopic_.c_str());
     resetPublishTracking();
     state_.markAllForRepublish();
     nextPublishAt_ = millis();
@@ -204,6 +207,22 @@ void MqttService::onMessage(char* topic, uint8_t* payload,
         }
         return;
     }
+    if (strcmp(topic, sounderVolumeCommandTopic_.c_str()) == 0) {
+        bool numeric = !message.isEmpty();
+        for (const char character : message) {
+            if (!isDigit(character)) {
+                numeric = false;
+                break;
+            }
+        }
+        const int requested = numeric ? message.toInt() : -1;
+        if (requested < 0 || requested > 100 ||
+            !bridge_.requestSounderVolume(static_cast<uint8_t>(requested))) {
+            Serial.print(F("[mqtt] Rejected sounder volume command: "));
+            Serial.println(message);
+        }
+        return;
+    }
     if (strcmp(topic, baudCommandTopic_.c_str()) != 0) return;
 
     if (message == "auto") {
@@ -242,7 +261,13 @@ void MqttService::resetPublishTracking() {
     memset(publishedZoneRevision_, 0, sizeof(publishedZoneRevision_));
     publishedAlarmRevision_ = 0;
     publishedBatteryRevision_ = 0;
+    publishedSounderVolumeRevision_ = 0;
     publishedFirmwareRevision_ = 0;
+    publishedTroubleRevision_ = 0;
+    publishingTroubleRevision_ = 0;
+    troublePublishStage_ = 0;
+    publishedPanelSecurityRevision_ = 0;
+    publishedAlarmMemoryRevision_ = 0;
     publishedDiagnosticRevision_ = 0;
     publishedAlarmCommandRevision_ = 0;
     publishedBaudState_ = String();
@@ -316,9 +341,46 @@ void MqttService::publishNext() {
         }
         return;
     }
+    if (state_.sounderVolumeRevision() !=
+        publishedSounderVolumeRevision_) {
+        if (publishSounderVolumeState()) {
+            publishedSounderVolumeRevision_ =
+                state_.sounderVolumeRevision();
+        }
+        return;
+    }
     if (state_.firmwareRevision() != publishedFirmwareRevision_) {
         if (publishFirmwareState()) {
             publishedFirmwareRevision_ = state_.firmwareRevision();
+        }
+        return;
+    }
+    if (state_.panelSecurityRevision() != publishedPanelSecurityRevision_) {
+        if (publishPanelSecurityState()) {
+            publishedPanelSecurityRevision_ = state_.panelSecurityRevision();
+        }
+        return;
+    }
+    if (state_.alarmMemoryRevision() != publishedAlarmMemoryRevision_) {
+        if (publishAlarmMemoryState()) {
+            publishedAlarmMemoryRevision_ = state_.alarmMemoryRevision();
+        }
+        return;
+    }
+    if (troublePublishStage_ != 0 ||
+        state_.troubleRevision() != publishedTroubleRevision_) {
+        if (troublePublishStage_ == 0) {
+            publishingTroubleRevision_ = state_.troubleRevision();
+            if (publishTroubleSummary()) troublePublishStage_ = 1;
+            return;
+        }
+        const uint8_t slot = troublePublishStage_ - 1;
+        if (publishTroubleEntry(slot)) {
+            ++troublePublishStage_;
+            if (troublePublishStage_ > Gc2State::kMaxTroubles) {
+                publishedTroubleRevision_ = publishingTroubleRevision_;
+                troublePublishStage_ = 0;
+            }
         }
         return;
     }
@@ -403,6 +465,9 @@ bool MqttService::publishNativeDiscoveryCleanup(uint16_t stage) {
     } else if (stage == kSensorCount + 1) {
         topic = String("homeassistant/alarm_control_panel/") + deviceId_ +
                 "_alarm/config";
+    } else if (stage == kSensorCount + 2) {
+        topic = String("homeassistant/number/") + deviceId_ +
+                "_sounder_volume/config";
     } else {
         stage -= kBaseDiscoveryCount;
         const bool bypass = stage >= Gc2State::kMaxZones - 1;
@@ -432,7 +497,7 @@ bool MqttService::publishManifest() {
     payload += jsonEscape(rootTopic_);
     payload += F("\",\"bridge_firmware\":\"");
     payload += kFirmwareRelease;
-    payload += F("\",\"max_zones\":74,\"capabilities\":{\"alarm_control\":true,\"zone_bypass\":true,\"zone_inventory\":true,\"zone_battery\":true,\"observed_users\":true,\"uart_baud_control\":true}}");
+    payload += F("\",\"max_zones\":74,\"capabilities\":{\"alarm_control\":true,\"zone_bypass\":true,\"zone_inventory\":true,\"zone_battery\":true,\"zone_trouble\":true,\"panel_security\":true,\"alarm_memory\":true,\"observed_users\":true,\"uart_baud_control\":true,\"sounder_volume_control\":true}}");
     if (!publishRetained("manifest", payload)) return false;
 
     // This stable discovery address lets Home Assistant offer the bridge even
@@ -512,6 +577,11 @@ bool MqttService::publishBaseDiscovery(uint8_t stage) {
                 makeTopic("panel/status"),
                 "{{ value_json.user if value_json.user is not none else 'unknown' }}",
                 String(), String(), "diagnostic");
+        case 14:
+            return publishDiscovery(
+                "number", "sounder_volume", "Chime and Announcement Volume",
+                makeTopic("panel/sounder_volume"), "{{ value }}", String(),
+                "%", "config", String(), sounderVolumeCommandTopic_);
         default: return true;
     }
 }
@@ -765,6 +835,12 @@ bool MqttService::publishBatteryState() {
     return publishRetained("panel/battery", payload);
 }
 
+bool MqttService::publishSounderVolumeState() {
+    if (!state_.sounderVolumeKnown()) return true;
+    return publishRetained("panel/sounder_volume",
+                           String(state_.sounderVolumePercent()));
+}
+
 bool MqttService::publishFirmwareState() {
     if (state_.firmwareVersion().isEmpty()) return true;
     String payload = F("{\"build\":");
@@ -773,6 +849,110 @@ bool MqttService::publishFirmwareState() {
     payload += jsonEscape(state_.firmwareVersion());
     payload += F("\"}");
     return publishRetained("panel/firmware", payload);
+}
+
+bool MqttService::publishTroubleSummary() {
+    if (!state_.troubleKnown()) return true;
+    String payload = F("{\"known\":true,\"active\":");
+    payload += state_.activeTroubleCount() > 0 ? F("true") : F("false");
+    payload += F(",\"count\":");
+    payload += state_.troubleCount();
+    payload += F(",\"active_count\":");
+    payload += state_.activeTroubleCount();
+    payload += F(",\"unacknowledged_count\":");
+    payload += state_.unacknowledgedTroubleCount();
+    payload += '}';
+    return publishRetained("panel/trouble", payload);
+}
+
+bool MqttService::publishTroubleEntry(uint8_t slot) {
+    if (slot >= Gc2State::kMaxTroubles) return true;
+    char number[3];
+    snprintf(number, sizeof(number), "%02u", slot);
+    const String suffix = String("panel/trouble/") + number;
+    const Gc2TroubleSnapshot& trouble = state_.trouble(slot);
+    if (!trouble.valid) return publishRetained(suffix, String());
+
+    String payload;
+    payload.reserve(300);
+    payload += F("{\"slot\":");
+    payload += trouble.slot;
+    payload += F(",\"zone\":");
+    payload += trouble.zone;
+    payload += F(",\"device\":\"");
+    payload += jsonEscape(trouble.device);
+    payload += F("\",\"description\":\"");
+    payload += jsonEscape(trouble.description);
+    payload += F("\",\"active\":");
+    payload += trouble.active ? F("true") : F("false");
+    payload += F(",\"acknowledged\":");
+    payload += trouble.acknowledged ? F("true") : F("false");
+    payload += F(",\"raised_tick\":\"");
+    payload += hexValue(trouble.raisedTick, 8);
+    payload += F("\",\"restored_tick\":\"");
+    payload += hexValue(trouble.restoredTick, 8);
+    payload += F("\"}");
+    return publishRetained(suffix, payload);
+}
+
+bool MqttService::publishPanelSecurityState() {
+    const Gc2PanelSecuritySnapshot& security = state_.panelSecurity();
+    if (!security.known) return true;
+    const bool acLoss = security.acLossInstantaneous ||
+                        security.acLossFiltered || security.acLossLowPower;
+    const bool communicationFailure =
+        security.phoneLineFailure || security.centralStationFailure ||
+        security.cellularFailure || security.radioModemNetworkFailure ||
+        security.ethernetNetworkFailure;
+    String payload = F("{\"known\":true,\"ac_loss\":");
+    payload += acLoss ? F("true") : F("false");
+    payload += F(",\"ac_loss_instantaneous\":");
+    payload += security.acLossInstantaneous ? F("true") : F("false");
+    payload += F(",\"ac_loss_filtered\":");
+    payload += security.acLossFiltered ? F("true") : F("false");
+    payload += F(",\"ac_loss_lpm\":");
+    payload += security.acLossLowPower ? F("true") : F("false");
+    payload += F(",\"panel_tamper\":");
+    payload += security.panelTamper ? F("true") : F("false");
+    payload += F(",\"siren_tamper\":");
+    payload += security.sirenTamper ? F("true") : F("false");
+    payload += F(",\"rf_jam\":");
+    payload += security.rfJam ? F("true") : F("false");
+    payload += F(",\"communication_failure\":");
+    payload += communicationFailure ? F("true") : F("false");
+    payload += F(",\"phone_line_failure\":");
+    payload += security.phoneLineFailure ? F("true") : F("false");
+    payload += F(",\"central_station_failure\":");
+    payload += security.centralStationFailure ? F("true") : F("false");
+    payload += F(",\"cellular_failure\":");
+    payload += security.cellularFailure ? F("true") : F("false");
+    payload += F(",\"radio_modem_network_failure\":");
+    payload += security.radioModemNetworkFailure ? F("true") : F("false");
+    payload += F(",\"ethernet_network_failure\":");
+    payload += security.ethernetNetworkFailure ? F("true") : F("false");
+    payload += F(",\"reset_required\":");
+    payload += security.resetRequired ? F("true") : F("false");
+    payload += F(",\"sampled_at_ms\":");
+    payload += security.sampledAtMs;
+    payload += '}';
+    return publishRetained("panel/security", payload);
+}
+
+bool MqttService::publishAlarmMemoryState() {
+    const Gc2AlarmMemorySnapshot& memory = state_.alarmMemory();
+    if (!memory.known) return true;
+    String payload = F("{\"known\":true,\"clear\":");
+    payload += memory.clear ? F("true") : F("false");
+    payload += F(",\"latched\":");
+    payload += memory.latched ? F("true") : F("false");
+    payload += F(",\"bell_timeout\":");
+    payload += memory.bellTimeout ? F("true") : F("false");
+    payload += F(",\"reported_alarm_type\":");
+    payload += memory.reportedAlarmType;
+    payload += F(",\"sampled_at_ms\":");
+    payload += memory.sampledAtMs;
+    payload += '}';
+    return publishRetained("panel/alarm_memory", payload);
 }
 
 bool MqttService::publishZoneState(uint8_t zoneNumber) {
@@ -812,6 +992,17 @@ bool MqttService::publishZoneState(uint8_t zoneNumber) {
     payload += zone.batteryKnown ? F("true") : F("false");
     payload += F(",\"battery_low\":");
     payload += zone.batteryLow ? F("true") : F("false");
+    payload += F(",\"trouble_known\":");
+    payload += zone.troubleKnown ? F("true") : F("false");
+    payload += F(",\"trouble_active\":");
+    payload += zone.troubleActive ? F("true") : F("false");
+    payload += F(",\"tamper\":");
+    payload += zone.tamper ? F("true") : F("false");
+    payload += F(",\"supervision_lost\":");
+    payload += zone.supervisionLost ? F("true") : F("false");
+    payload += F(",\"trouble_summary\":\"");
+    payload += jsonEscape(zone.troubleSummary);
+    payload += '"';
     payload += F(",\"last_seen_ms\":");
     payload += zone.lastSeenMs;
     payload += '}';

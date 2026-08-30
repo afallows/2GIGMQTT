@@ -129,6 +129,11 @@ void PanelBridge::setNetworkReady(bool ready) {
         Serial.print(F("[telnet] Listening on port "));
         Serial.println(AppConfig::kTelnetPort);
     }
+    if (ready && panelReady()) {
+        // Re-read retained alarm memory when Home Assistant connectivity
+        // returns, in case an alarm occurred while MQTT was unavailable.
+        nextAlarmMemoryPollAt_ = millis() + AppConfig::kCommandIntervalMs;
+    }
     if (!ready) disconnectClient();
 }
 
@@ -148,6 +153,7 @@ void PanelBridge::loop() {
     }
     if (panelReady()) {
         processPanelInput();
+        parser_.finishTimedSnapshots();
         processUnlock();
         processUnlockSupervisor();
         processAlarmControl();
@@ -348,6 +354,12 @@ void PanelBridge::acceptCurrentBaudCandidate(const String& evidence) {
     nextZoneStatePollAt_ = millis() + AppConfig::kZoneStateInitialDelayMs;
     nextZoneTroublePollAt_ =
         millis() + AppConfig::kZoneTroubleInitialDelayMs;
+    nextSounderStatusPollAt_ =
+        millis() + AppConfig::kSounderStatusInitialDelayMs;
+    nextPanelStatusPollAt_ =
+        millis() + AppConfig::kPanelStatusInitialDelayMs;
+    nextAlarmMemoryPollAt_ =
+        millis() + AppConfig::kAlarmMemoryInitialDelayMs;
     panelLine_ = String();
     panelLine_.reserve(512);
 
@@ -378,6 +390,9 @@ void PanelBridge::restartBaudDetection() {
     nextZoneMetadataPollAt_ = 0;
     nextZoneStatePollAt_ = 0;
     nextZoneTroublePollAt_ = 0;
+    nextSounderStatusPollAt_ = 0;
+    nextPanelStatusPollAt_ = 0;
+    nextAlarmMemoryPollAt_ = 0;
     trialBaud_ = 0;
     validationLine_ = String();
 }
@@ -420,6 +435,12 @@ void PanelBridge::startPanelUart(uint32_t baud) {
     nextZoneStatePollAt_ = millis() + AppConfig::kZoneStateInitialDelayMs;
     nextZoneTroublePollAt_ =
         millis() + AppConfig::kZoneTroubleInitialDelayMs;
+    nextSounderStatusPollAt_ =
+        millis() + AppConfig::kSounderStatusInitialDelayMs;
+    nextPanelStatusPollAt_ =
+        millis() + AppConfig::kPanelStatusInitialDelayMs;
+    nextAlarmMemoryPollAt_ =
+        millis() + AppConfig::kAlarmMemoryInitialDelayMs;
     Serial.print(F("[uart] Panel UART set to "));
     Serial.print(baud);
     Serial.println(F(" baud, 8N1."));
@@ -463,6 +484,13 @@ void PanelBridge::processPanelByte(uint8_t value) {
 
 void PanelBridge::inspectPanelLine(const String& line) {
     parser_.processLine(line);
+
+    if (line.indexOf("TROUBLE_MEMORY_UPDATED") >= 0) {
+        nextZoneTroublePollAt_ = millis();
+    }
+    if (line.indexOf("ALARM_MEMORY_UPDATED") >= 0) {
+        nextAlarmMemoryPollAt_ = millis();
+    }
 
     String lowercase = line;
     lowercase.toLowerCase();
@@ -584,7 +612,25 @@ void PanelBridge::processMonitorPolling() {
     }
     if (deadlineReached(nextZoneTroublePollAt_) &&
         sendMonitorCommand("trouble_memory")) {
+        parser_.beginTroubleSnapshot();
         nextZoneTroublePollAt_ = millis() + AppConfig::kZoneTroubleRefreshMs;
+        return;
+    }
+    if (deadlineReached(nextSounderStatusPollAt_) &&
+        sendMonitorCommand("sounder_status")) {
+        nextSounderStatusPollAt_ =
+            millis() + AppConfig::kSounderStatusRefreshMs;
+        return;
+    }
+    if (deadlineReached(nextPanelStatusPollAt_) &&
+        sendMonitorCommand("panel_status")) {
+        nextPanelStatusPollAt_ = millis() + AppConfig::kPanelStatusRefreshMs;
+        return;
+    }
+    if (deadlineReached(nextAlarmMemoryPollAt_) &&
+        sendMonitorCommand("alarm_memory")) {
+        parser_.beginAlarmMemorySnapshot();
+        nextAlarmMemoryPollAt_ = millis() + AppConfig::kAlarmMemoryRefreshMs;
     }
 }
 
@@ -790,6 +836,19 @@ bool PanelBridge::requestZoneBypass(uint8_t zone, bool bypassed) {
     return beginProtectedCommand(action, command);
 }
 
+bool PanelBridge::requestSounderVolume(uint8_t percent) {
+    if (percent > 100) return false;
+    char action[24];
+    char command[24];
+    snprintf(action, sizeof(action), "sounder_volume_%u", percent);
+    snprintf(command, sizeof(command), "sounder_volume %u", percent);
+    const bool accepted = beginProtectedCommand(action, command);
+    if (accepted) {
+        nextSounderStatusPollAt_ = millis() + AppConfig::kCommandIntervalMs;
+    }
+    return accepted;
+}
+
 bool PanelBridge::beginProtectedCommand(const String& action,
                                         const String& command) {
     if (alarmControlPhase_ != AlarmControlPhase::Idle) return false;
@@ -817,7 +876,7 @@ bool PanelBridge::beginProtectedCommand(const String& action,
         nextAlarmControlActionAt_ = millis();
         setAlarmCommandStatus("unlocking", "waiting for persistent debug access");
     }
-    sendClientStatus(String("MQTT alarm action accepted: ") +
+    sendClientStatus(String("MQTT panel action accepted: ") +
                      alarmCommandAction_ + '.');
     return true;
 }
@@ -884,7 +943,7 @@ void PanelBridge::setAlarmCommandStatus(const String& status,
     alarmCommandStatus_ = status;
     alarmCommandDetail_ = detail;
     if (++alarmCommandRevision_ == 0) alarmCommandRevision_ = 1;
-    Serial.print(F("[alarm] "));
+    Serial.print(F("[panel] "));
     Serial.print(alarmCommandAction_);
     Serial.print(F(": "));
     Serial.print(status);
@@ -899,11 +958,11 @@ void PanelBridge::finishAlarmControl() {
 
     if (alarmCommandTransmitted_) {
         setAlarmCommandStatus("submitted",
-                              "command sent; panel state confirmation pending");
+                              "command sent; panel output confirmation pending");
     } else {
         setAlarmCommandStatus("failed", "command was not sent");
     }
-    sendClientStatus(String("MQTT alarm action ") + alarmCommandAction_ +
+    sendClientStatus(String("MQTT panel action ") + alarmCommandAction_ +
                      ": " + alarmCommandStatus_ + ".");
     alarmCommandText_ = String();
 }
@@ -1135,6 +1194,9 @@ bool PanelBridge::processLocalCommand(const String& command) {
         nextZoneMetadataPollAt_ = millis();
         nextZoneStatePollAt_ = millis();
         nextZoneTroublePollAt_ = millis();
+        nextSounderStatusPollAt_ = millis();
+        nextPanelStatusPollAt_ = millis();
+        nextAlarmMemoryPollAt_ = millis();
         nextUnlockSupervisionAt_ = millis();
         sendClientStatus(
             "Monitor mode enabled; persistent unlock supervision and read-only polling are active.");

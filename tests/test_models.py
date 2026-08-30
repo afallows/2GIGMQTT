@@ -16,6 +16,8 @@ MODELS = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODELS
 SPEC.loader.exec_module(MODELS)
 Gc2Snapshot = MODELS.Gc2Snapshot
+panel_activity_transition = MODELS.panel_activity_transition
+zone_activity_transition = MODELS.zone_activity_transition
 
 
 def test_retained_inventory_rebuilds_panel() -> None:
@@ -124,3 +126,23 @@ def test_security_trouble_and_alarm_memory_are_retained() -> None:
 
     assert data.apply_message(root, f"{root}/panel/trouble/02", "")
     assert 2 not in data.troubles
+
+
+def test_activity_transitions_ignore_initialization_and_repeated_reads() -> None:
+    moisture = {"name": "Kitchen Flood Sensor", "zone_type": "Water"}
+
+    assert zone_activity_transition(moisture, None, "OFF") is None
+    assert zone_activity_transition(moisture, "OFF", "OFF") is None
+    assert zone_activity_transition(moisture, "OFF", "ON") == "wet"
+    assert zone_activity_transition(moisture, "ON", "OFF") == "dry"
+
+    assert panel_activity_transition("unknown", "disarmed") is None
+    assert panel_activity_transition("disarmed", "disarmed") is None
+    assert panel_activity_transition("disarmed", "armed_away") == "armed_away"
+
+
+def test_activity_transitions_use_security_specific_labels() -> None:
+    assert zone_activity_transition({"name": "Patio Door"}, "OFF", "ON") == "opened"
+    assert zone_activity_transition({"name": "Patio Door"}, "ON", "OFF") == "closed"
+    assert zone_activity_transition({"name": "Hall Motion"}, "OFF", "ON") == "detected"
+    assert zone_activity_transition({"name": "Smoke Alarm"}, "OFF", "ON") == "smoke"

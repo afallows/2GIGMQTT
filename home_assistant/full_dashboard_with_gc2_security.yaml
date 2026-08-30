@@ -9501,24 +9501,11 @@ views:
               type: logbook
               hours_to_show: 24
               name_detail: entity
-              state_filter:
-                - "on"
-                - "off"
-                - disarmed
-                - arming
-                - armed_home
-                - armed_away
-                - pending
-                - triggered
             card_param: entities
             filter:
               include:
                 - integration: gc2_panel
-                  domain: alarm_control_panel
-                - integration: gc2_panel
-                  domain: binary_sensor
-                  attributes:
-                    zone_type: "*"
+                  domain: event
             unique: true
             sort:
               method: name

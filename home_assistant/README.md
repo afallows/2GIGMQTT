@@ -23,9 +23,9 @@ whole dashboard.
   explicit confirmation; bypassed zones remain in Attention until restored.
 - Presents a full-width alarm overview with live totals for active, bypassed,
   and unhealthy zones plus dedicated Stay, Away, and Disarm actions.
-- Shows meaningful alarm and zone state changes in Home Assistant's native
-  Activity timeline. Supervisory-only updates and unavailable/available
-  recovery transitions are omitted.
+- Shows the integration's dedicated alarm and zone event entities in Home
+  Assistant's native Activity timeline. Supervisory-only updates, initial
+  synchronization, and unavailable/available recovery transitions are omitted.
 - Includes panel diagnostics and a GC2 chime/announcement volume preset
   dropdown for 0%, 10%, 25%, 50%, 75%, and 100%.
 - Retains the locks, water shutoff, and lighting controls from the previous

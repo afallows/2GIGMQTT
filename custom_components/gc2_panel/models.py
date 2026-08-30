@@ -11,6 +11,74 @@ _ZONE_TOPIC = re.compile(r"zone/(\d{2})/state$")
 _USER_TOPIC = re.compile(r"user/(\d{3})/state$")
 _TROUBLE_TOPIC = re.compile(r"panel/trouble/(\d{2})$")
 
+PANEL_ACTIVITY_EVENT_TYPES = (
+    "disarmed",
+    "arming",
+    "armed_home",
+    "armed_away",
+    "pending",
+    "triggered",
+)
+ZONE_ACTIVITY_EVENT_TYPES = (
+    "opened",
+    "closed",
+    "detected",
+    "clear",
+    "wet",
+    "dry",
+    "smoke",
+    "carbon_monoxide",
+    "gas",
+    "temperature_alarm",
+    "normal",
+    "glass_break",
+    "active",
+    "idle",
+)
+
+
+def panel_activity_transition(previous: str, current: str) -> str | None:
+    """Return a genuine panel transition, excluding initialization states."""
+    if (
+        previous not in PANEL_ACTIVITY_EVENT_TYPES
+        or current not in PANEL_ACTIVITY_EVENT_TYPES
+        or previous == current
+    ):
+        return None
+    return current
+
+
+def zone_activity_transition(
+    zone: dict[str, Any], previous: str | None, current: str | None
+) -> str | None:
+    """Describe a genuine zone transition, excluding initialization states."""
+    if previous not in ("ON", "OFF") or current not in ("ON", "OFF"):
+        return None
+    if previous == current:
+        return None
+
+    active = current == "ON"
+    text = f"{zone.get('name', '')} {zone.get('zone_type', '')}".lower()
+    if "carbon monoxide" in text:
+        return "carbon_monoxide" if active else "clear"
+    if "smoke" in text or "fire" in text:
+        return "smoke" if active else "clear"
+    if "water" in text or "flood" in text:
+        return "wet" if active else "dry"
+    if "gas" in text:
+        return "gas" if active else "clear"
+    if "motion" in text or "interior" in text:
+        return "detected" if active else "clear"
+    if "glass break" in text:
+        return "glass_break" if active else "clear"
+    if "temperature" in text or "freezer" in text:
+        return "temperature_alarm" if active else "normal"
+    if "keyfob" in text:
+        return "active" if active else "idle"
+    if any(value in text for value in ("door", "entry", "gate", "window")):
+        return "opened" if active else "closed"
+    return "active" if active else "clear"
+
 
 def _json_object(payload: str) -> dict[str, Any] | None:
     try:

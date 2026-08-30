@@ -206,7 +206,7 @@ button_card_templates:
     name: >
       [[[
         const value = (entity.attributes.friendly_name || entity.entity_id)
-          .replace(/^2GIG GC2 Panel\s*/i, "").trim();
+          .replace(/^2GIG GC2 (?:Panel|Bridge(?:\s+[0-9A-F]{6,12})?)\s*/i, "").trim();
         return value.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
       ]]]
     icon: >
@@ -434,7 +434,7 @@ button_card_templates:
         text: >
           [[[
             const name = (entity.attributes.friendly_name || `Zone ${entity.attributes.number}`)
-              .replace(/^2GIG GC2 Panel\s*/i, "").trim();
+              .replace(/^2GIG GC2 (?:Panel|Bridge(?:\s+[0-9A-F]{6,12})?)\s*/i, "").trim();
             const bypassed = Boolean(entity.attributes.bypassed);
             return bypassed
               ? `Remove the bypass from ${name} and return it to normal protection?`
@@ -489,7 +489,7 @@ button_card_templates:
     name: >
       [[[
         return (entity.attributes.friendly_name || "Panel alert")
-          .replace(/^2GIG GC2 Panel\s*/i, "").trim();
+          .replace(/^2GIG GC2 (?:Panel|Bridge(?:\s+[0-9A-F]{6,12})?)\s*/i, "").trim();
       ]]]
     label: Check the GC2 panel
     icon: mdi:alert-circle
@@ -9382,23 +9382,101 @@ views:
                   | select('match', '^select\\.')
                   | select('search', 'chime_and_announcement_volume_preset$')
                   | list %}
-                {% if presets %}
-                  {{ presets }}
-                {% else %}
-                  {{ gc2
+                {% set controls = presets if presets else gc2
                     | select('match', '^number\\.')
                     | select('search', 'chime_and_announcement_volume$')
-                    | list }}
-                {% endif %}
+                    | list %}
+                {% set ns = namespace(rows=[]) %}
+                {% for entity_id in controls %}
+                  {% set ns.rows = ns.rows + [{
+                    'entity': entity_id,
+                    'name': 'Chime and announcement volume'
+                  }] %}
+                {% endfor %}
+                {{ ns.rows }}
               include:
                 - integration: gc2_panel
-                  name: "/(Backup battery|Backup battery voltage|Trouble count|Unacknowledged troubles|Command status|UART baud|Debug unlock)$/"
+                  name: "/Backup battery$/"
                   options:
+                    name: Backup battery
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  name: "/Backup battery voltage$/"
+                  options:
+                    name: Backup battery voltage
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  name: "/Command status$/"
+                  options:
+                    name: Command status
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  name: "/Debug unlock$/"
+                  options:
+                    name: Debug unlock
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  name: "/Trouble count$/"
+                  options:
+                    name: Trouble count
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  name: "/UART baud$/"
+                  options:
+                    name: UART baud
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  name: "/Unacknowledged troubles$/"
+                  options:
+                    name: Unacknowledged troubles
                     secondary_info: last-changed
                 - integration: gc2_panel
                   domain: binary_sensor
-                  name: "/(Panel trouble|Panel tamper|Siren tamper|RF jamming|AC power loss|Communication failure|Panel reset required|Latched alarm memory)$/"
+                  name: "/AC power loss$/"
                   options:
+                    name: AC power loss
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  name: "/Communication failure$/"
+                  options:
+                    name: Communication failure
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  name: "/Latched alarm memory$/"
+                  options:
+                    name: Latched alarm memory
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  name: "/Panel reset required$/"
+                  options:
+                    name: Panel reset required
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  name: "/Panel tamper$/"
+                  options:
+                    name: Panel tamper
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  name: "/Panel trouble$/"
+                  options:
+                    name: Panel trouble
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  name: "/RF jamming$/"
+                  options:
+                    name: RF jamming
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  name: "/Siren tamper$/"
+                  options:
+                    name: Siren tamper
                     secondary_info: last-changed
             unique: true
             sort:

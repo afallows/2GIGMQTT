@@ -14,6 +14,8 @@ whole dashboard.
   RTL_433 entities with similar names.
 - Groups panel-programmed zones into doors, windows, motion, life safety, and
   water/environment sections.
+- Removes the MAC-qualified GC2 device prefix from dashboard labels while
+  retaining that identifier in Home Assistant's device registry.
 - Shows battery, RF supervision, tamper, bypass, and trouble state on each zone
   card using the attributes already supplied by the integration.
 - Elevates open/active and unhealthy zones into an Attention section.

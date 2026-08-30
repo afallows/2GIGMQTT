@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/afallows/2GIGMQTT/issues",
   "mqtt": ["2gig/gc2/discovery/+"],
   "requirements": [],
-  "version": "0.5.3"
+  "version": "0.5.4"
 }

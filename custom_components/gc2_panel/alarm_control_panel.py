@@ -37,7 +37,7 @@ async def async_setup_entry(
 class Gc2Alarm(Gc2Entity, AlarmControlPanelEntity):
     """Full Home Assistant control surface for the physical GC2."""
 
-    _attr_name = None
+    _attr_name = "Security system"
     _attr_code_arm_required = False
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_HOME

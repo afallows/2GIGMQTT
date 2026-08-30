@@ -346,7 +346,10 @@ and enter the full topic, for example
 
 The integration uses the MAC-derived config-entry device ID from the beginning
 of platform setup. Its device-registry identity therefore cannot change based
-on which retained MQTT message arrives first. Firmware also re-sends deletion
+on which retained MQTT message arrives first. During an upgrade it removes an
+empty legacy `2GIG GC2 Panel` registry device after all entities have migrated
+to the MAC-identified device; a device containing any entity is never removed.
+Firmware also re-sends deletion
 messages for the obsolete native MQTT discovery entities whenever Home
 Assistant announces that it is online.
 

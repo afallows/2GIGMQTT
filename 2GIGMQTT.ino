@@ -88,7 +88,11 @@ void processNetwork() {
                 announceNetworkReady();
             } else if (millis() - networkStateStartedAt >=
                        AppConfig::kWifiConnectTimeoutMs) {
-                startProvisioning();
+                Serial.println(
+                    F("[wifi] Saved network unavailable; remaining provisioned and retrying."));
+                WiFi.reconnect();
+                networkState = NetworkState::Reconnecting;
+                networkStateStartedAt = millis();
             }
             break;
 
@@ -112,11 +116,6 @@ void processNetwork() {
                     credentialStore.clear();
                     WiFi.disconnect(false, true);
                 }
-            } else if (credentialStore.hasTelnetPassword() &&
-                       WiFi.status() == WL_CONNECTED) {
-                // A previously configured station can recover while the portal
-                // is active after a prolonged network outage.
-                announceNetworkReady();
             }
             break;
         }
@@ -138,8 +137,10 @@ void processNetwork() {
             if (WiFi.status() == WL_CONNECTED) {
                 announceNetworkReady();
             } else if (millis() - networkStateStartedAt >=
-                       AppConfig::kWifiReconnectPortalDelayMs) {
-                startProvisioning();
+                       AppConfig::kWifiReconnectIntervalMs) {
+                Serial.println(F("[wifi] Still offline; retrying saved network."));
+                WiFi.reconnect();
+                networkStateStartedAt = millis();
             }
             break;
     }

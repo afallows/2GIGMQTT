@@ -73,3 +73,51 @@ def test_invalid_or_unrelated_messages_are_ignored() -> None:
     data = Gc2Snapshot()
     assert not data.apply_message("gc2/root", "another/root/manifest", "{}")
     assert not data.apply_message("gc2/root", "gc2/root/zone/01/state", "oops")
+
+
+def test_sounder_volume_accepts_only_normalized_percent() -> None:
+    root = "2gig/gc2/bridge"
+    data = Gc2Snapshot()
+
+    assert data.apply_message(root, f"{root}/panel/sounder_volume", "42")
+    assert data.sounder_volume == 42
+    assert not data.apply_message(root, f"{root}/panel/sounder_volume", "42")
+    assert not data.apply_message(root, f"{root}/panel/sounder_volume", "101")
+    assert not data.apply_message(root, f"{root}/panel/sounder_volume", "loud")
+    assert data.sounder_volume == 42
+
+
+def test_security_trouble_and_alarm_memory_are_retained() -> None:
+    root = "2gig/gc2/bridge"
+    data = Gc2Snapshot()
+
+    assert data.apply_message(
+        root,
+        f"{root}/panel/security",
+        '{"known":true,"panel_tamper":true,"rf_jam":false}',
+    )
+    assert data.apply_message(
+        root,
+        f"{root}/panel/trouble",
+        '{"known":true,"active":true,"active_count":1,'
+        '"unacknowledged_count":1}',
+    )
+    assert data.apply_message(
+        root,
+        f"{root}/panel/trouble/02",
+        '{"slot":2,"zone":0,"description":"Panel Tamper",'
+        '"active":true,"acknowledged":false}',
+    )
+    assert data.apply_message(
+        root,
+        f"{root}/panel/alarm_memory",
+        '{"known":true,"clear":false,"latched":true}',
+    )
+
+    assert data.security["panel_tamper"] is True
+    assert data.trouble_summary["active_count"] == 1
+    assert data.troubles[2]["description"] == "Panel Tamper"
+    assert data.alarm_memory["latched"] is True
+
+    assert data.apply_message(root, f"{root}/panel/trouble/02", "")
+    assert 2 not in data.troubles

@@ -10,6 +10,9 @@ class Gc2ConsoleParser {
 
     void processLine(const String& line);
     void noteBridgeCommand(const String& action);
+    void beginTroubleSnapshot();
+    void beginAlarmMemorySnapshot();
+    void finishTimedSnapshots();
 
   private:
     Gc2State& state_;
@@ -24,6 +27,8 @@ class Gc2ConsoleParser {
     String pendingBypassOrigin_ = "unknown";
     String bridgeCommandAction_;
     uint32_t bridgeCommandAt_ = 0;
+    uint32_t troubleSnapshotStartedAt_ = 0;
+    uint32_t alarmMemorySnapshotStartedAt_ = 0;
 
     static String normalizeState(String value);
     static String collapseSpaces(String value);
@@ -31,11 +36,14 @@ class Gc2ConsoleParser {
     bool parseZoneSnapshot(const String& line);
     bool parseZoneState(const String& line);
     bool parseZoneTrouble(const String& line);
+    bool parsePanelSecurity(const String& line);
+    bool parseAlarmMemory(const String& line);
     bool parseAlarmState(const String& line);
     bool parseAlarmActivity(const String& line);
     bool parseZoneBypass(const String& line);
     bool consumeBridgeCommand(const String& prefix);
     bool parseBattery(const String& line);
+    bool parseSounderVolume(const String& line);
     bool parseBuildInfo(const String& line);
     bool parseChimeName(const String& line);
     bool parseZoneInfo(const String& line);

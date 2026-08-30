@@ -10,6 +10,7 @@ TRANSPORT_SCHEMA = "gc2-mqtt-v1"
 PLATFORMS = (
     Platform.ALARM_CONTROL_PANEL,
     Platform.BINARY_SENSOR,
+    Platform.NUMBER,
     Platform.SENSOR,
     Platform.SWITCH,
 )

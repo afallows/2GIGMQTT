@@ -5,6 +5,25 @@
 
 #include "ZoneVocabulary.h"
 
+namespace {
+constexpr uint32_t kSnapshotSettleMs = 2000;
+
+bool parseTrailingInteger(const String& line, int& value) {
+    int end = line.length() - 1;
+    while (end >= 0 && isspace(static_cast<unsigned char>(line[end]))) --end;
+    if (end < 0 || !isdigit(static_cast<unsigned char>(line[end]))) {
+        return false;
+    }
+    int start = end;
+    while (start >= 0 && isdigit(static_cast<unsigned char>(line[start]))) {
+        --start;
+    }
+    if (start >= 0 && line[start] == '-') --start;
+    value = line.substring(start + 1, end + 1).toInt();
+    return true;
+}
+}  // namespace
+
 String Gc2ConsoleParser::normalizeState(String value) {
     value.trim();
     value.toLowerCase();
@@ -86,6 +105,29 @@ bool Gc2ConsoleParser::parseZonePacket(const String& line) {
     return true;
 }
 
+void Gc2ConsoleParser::beginTroubleSnapshot() {
+    state_.beginTroubleSnapshot();
+    troubleSnapshotStartedAt_ = millis();
+}
+
+void Gc2ConsoleParser::beginAlarmMemorySnapshot() {
+    state_.beginAlarmMemorySnapshot();
+    alarmMemorySnapshotStartedAt_ = millis();
+}
+
+void Gc2ConsoleParser::finishTimedSnapshots() {
+    if (troubleSnapshotStartedAt_ != 0 &&
+        millis() - troubleSnapshotStartedAt_ >= kSnapshotSettleMs) {
+        state_.finishTroubleSnapshot();
+        troubleSnapshotStartedAt_ = 0;
+    }
+    if (alarmMemorySnapshotStartedAt_ != 0 &&
+        millis() - alarmMemorySnapshotStartedAt_ >= kSnapshotSettleMs) {
+        state_.finishAlarmMemorySnapshot();
+        alarmMemorySnapshotStartedAt_ = 0;
+    }
+}
+
 bool Gc2ConsoleParser::parseZoneSnapshot(const String& line) {
     if (!line.startsWith("Zone ")) return false;
 
@@ -145,24 +187,125 @@ bool Gc2ConsoleParser::parseZoneState(const String& line) {
 bool Gc2ConsoleParser::parseZoneTrouble(const String& line) {
     String lowercase = line;
     lowercase.toLowerCase();
-    if (lowercase.indexOf("low battery") < 0 ||
-        (line[0] != '#' && lowercase.indexOf("trouble_memory") < 0 &&
-         lowercase.indexOf("zone_in_trouble") < 0)) {
+    if (!line.startsWith("#") || line.length() < 4 || !isdigit(line[1]) ||
+        !isdigit(line[2])) {
         return false;
     }
 
     const int zoneMarker = lowercase.indexOf("zone ");
     if (zoneMarker < 0) return false;
-    const int zone = lowercase.substring(zoneMarker + 5).toInt();
-    if (zone <= 0 || zone >= Gc2State::kMaxZones) return true;
+    int zoneStart = zoneMarker + 5;
+    while (zoneStart < static_cast<int>(line.length()) &&
+           isspace(static_cast<unsigned char>(line[zoneStart]))) {
+        ++zoneStart;
+    }
+    int zoneEnd = zoneStart;
+    while (zoneEnd < static_cast<int>(line.length()) &&
+           isdigit(static_cast<unsigned char>(line[zoneEnd]))) {
+        ++zoneEnd;
+    }
+    if (zoneEnd == zoneStart) return false;
 
-    // A queried trouble-memory row explicitly marks restored entries. Live
-    // add/event lines represent an active low-battery condition.
-    const bool restored = line[0] == '#' &&
-                          lowercase.indexOf(" not restored ") < 0 &&
-                          lowercase.indexOf(" restored ") >= 0;
-    state_.recordZoneBattery(static_cast<uint8_t>(zone), !restored);
+    int stateMarker = lowercase.indexOf(" not restored", zoneEnd);
+    bool active = true;
+    int stateLength = strlen(" not restored");
+    if (stateMarker < 0) {
+        stateMarker = lowercase.indexOf(" restored", zoneEnd);
+        stateLength = strlen(" restored");
+        active = false;
+    }
+    if (stateMarker < 0) return false;
+
+    String identity = collapseSpaces(line.substring(zoneEnd, stateMarker));
+    const int separator = identity.indexOf(' ');
+    if (separator < 0) return false;
+    const String device = identity.substring(0, separator);
+    const String description = collapseSpaces(identity.substring(separator + 1));
+    if (description.isEmpty()) return false;
+
+    int acknowledgement = stateMarker + stateLength;
+    while (acknowledgement < static_cast<int>(line.length()) &&
+           isspace(static_cast<unsigned char>(line[acknowledgement]))) {
+        ++acknowledgement;
+    }
+    const String tailLower = lowercase.substring(acknowledgement);
+    bool acknowledged = false;
+    int acknowledgementLength = 0;
+    if (tailLower.startsWith("unack'd")) {
+        acknowledgementLength = strlen("unack'd");
+    } else if (tailLower.startsWith("ack'd")) {
+        acknowledged = true;
+        acknowledgementLength = strlen("ack'd");
+    } else {
+        return false;
+    }
+
+    unsigned long raisedTick = 0;
+    unsigned long restoredTick = 0;
+    if (sscanf(line.c_str() + acknowledgement + acknowledgementLength,
+               "%lx %lx", &raisedTick, &restoredTick) != 2) {
+        return false;
+    }
+
+    const int zone = line.substring(zoneStart, zoneEnd).toInt();
+    state_.recordTrouble(
+        static_cast<uint8_t>(line.substring(1, 3).toInt()),
+        zone >= 0 && zone < Gc2State::kMaxZones
+            ? static_cast<uint8_t>(zone)
+            : 0,
+        device, description, active, acknowledged,
+        static_cast<uint32_t>(raisedTick),
+        static_cast<uint32_t>(restoredTick));
     return true;
+}
+
+bool Gc2ConsoleParser::parsePanelSecurity(const String& line) {
+    static constexpr char const* kFields[] = {
+        "AC_loss_instantaneous",       "AC_loss_filtered",
+        "AC_loss_lpm",                 "phone_line_failure",
+        "panel_tamper",                "siren_tamper",
+        "RF_jam_detect",               "CS_failure_to_communicate",
+        "cell_failure_to_communicate", "radio_modem_network_failure",
+        "eb_network_failure",          "reset_required",
+    };
+    for (const char* field : kFields) {
+        const size_t length = strlen(field);
+        if (!line.startsWith(field) || line.length() <= length ||
+            !isspace(static_cast<unsigned char>(line[length]))) {
+            continue;
+        }
+        String raw = line.substring(length);
+        raw.trim();
+        if (raw.isEmpty() ||
+            (!isdigit(static_cast<unsigned char>(raw[0])) && raw[0] != '-')) {
+            return false;
+        }
+        return state_.recordPanelSecurityField(field, raw.toInt());
+    }
+    return false;
+}
+
+bool Gc2ConsoleParser::parseAlarmMemory(const String& line) {
+    String lowercase = line;
+    lowercase.toLowerCase();
+    if (lowercase.indexOf("alarm memory is clear") >= 0) {
+        state_.recordAlarmMemoryClear();
+        return true;
+    }
+
+    int value = 0;
+    if (lowercase.indexOf(
+            "alarm_memory_has_bell_timeout_without_clearing") >= 0 &&
+        parseTrailingInteger(line, value)) {
+        state_.recordAlarmMemoryBellTimeout(value != 0);
+        return true;
+    }
+    if (lowercase.indexOf("alarm_memory_has_reported_alarm_type") >= 0 &&
+        parseTrailingInteger(line, value)) {
+        state_.recordAlarmMemoryReportedType(value);
+        return true;
+    }
+    return false;
 }
 
 bool Gc2ConsoleParser::parseAlarmState(const String& line) {
@@ -458,6 +601,21 @@ bool Gc2ConsoleParser::parseZoneInfo(const String& line) {
     return true;
 }
 
+bool Gc2ConsoleParser::parseSounderVolume(const String& line) {
+    unsigned int value = 0;
+    if (sscanf(line.c_str(), "sounder_volume %u", &value) != 1) {
+        const int marker = line.indexOf("setting master_volume to");
+        if (marker < 0 ||
+            sscanf(line.c_str() + marker, "setting master_volume to %u",
+                   &value) != 1) {
+            return false;
+        }
+    }
+    if (value > 100) return false;
+    state_.recordSounderVolume(static_cast<uint8_t>(value));
+    return true;
+}
+
 void Gc2ConsoleParser::processLine(const String& input) {
     String line = input;
     line.trim();
@@ -468,10 +626,13 @@ void Gc2ConsoleParser::processLine(const String& input) {
     if (!recognized) recognized = parseZoneSnapshot(line);
     if (!recognized) recognized = parseZoneState(line);
     if (!recognized) recognized = parseZoneTrouble(line);
+    if (!recognized) recognized = parsePanelSecurity(line);
+    if (!recognized) recognized = parseAlarmMemory(line);
     if (!recognized) recognized = parseZoneBypass(line);
     if (!recognized) recognized = parseAlarmActivity(line);
     if (!recognized) recognized = parseAlarmState(line);
     if (!recognized) recognized = parseBattery(line);
+    if (!recognized) recognized = parseSounderVolume(line);
     if (!recognized) recognized = parseBuildInfo(line);
     if (!recognized) recognized = parseChimeName(line);
 

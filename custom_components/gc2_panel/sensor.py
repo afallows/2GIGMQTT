@@ -43,6 +43,8 @@ _SENSORS = (
     Gc2SensorSpec("last_action_origin", "Last alarm action origin", lambda data: data.panel.get("origin"), lambda data: dict(data.panel)),
     Gc2SensorSpec("last_action_user", "Last alarm user ID", lambda data: data.panel.get("user")),
     Gc2SensorSpec("command_status", "Command status", lambda data: data.command_status.get("status"), lambda data: dict(data.command_status)),
+    Gc2SensorSpec("trouble_count", "Trouble count", lambda data: data.trouble_summary.get("active_count"), lambda data: dict(data.trouble_summary)),
+    Gc2SensorSpec("unacknowledged_troubles", "Unacknowledged troubles", lambda data: data.trouble_summary.get("unacknowledged_count"), lambda data: dict(data.trouble_summary)),
     Gc2SensorSpec("debug_unlock", "Debug unlock", lambda data: data.diagnostics.get("debug_unlock")),
     Gc2SensorSpec("received_lines", "Console lines", lambda data: data.diagnostics.get("received_lines"), state_class=SensorStateClass.TOTAL_INCREASING),
     Gc2SensorSpec("unknown_lines", "Unparsed console lines", lambda data: data.diagnostics.get("unknown_lines"), state_class=SensorStateClass.TOTAL_INCREASING),

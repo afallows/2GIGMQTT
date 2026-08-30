@@ -8,8 +8,8 @@ front end for the physical GC2 rather than creating a second alarm engine.
 
 ## Current behavior
 
-- Opens an intentionally password-free captive setup network when the bridge
-  is unconfigured or cannot reconnect to Wi-Fi.
+- Opens an intentionally password-free captive setup network only when the
+  bridge has no saved configuration.
 - Saves Wi-Fi, Tera Term, and MQTT settings in ESP32 nonvolatile storage.
 - Requires a separate 8-to-64-character password before a Telnet client can
   access the console. Only a salted, iterated hash of that password is stored.
@@ -19,13 +19,18 @@ front end for the physical GC2 rather than creating a second alarm engine.
   text before it becomes the active baud.
 - Defaults to **monitor mode** after baud detection. It unlocks the debug
   console, verifies it every 5 minutes, and automatically unlocks it again if
-  needed. It reads live zone state and trouble memory every 30 seconds, and
+  needed. It reads live zone state and trouble memory every 30 seconds, panel
+  security status every 60 seconds, and retained alarm memory after UART startup,
+  network recovery, and every 5 minutes. It
   sends the larger read-only `zone_info 1` programming query after startup and
   every 6 hours.
 - Decodes the panel's programmed `VoiceDesc` names and updates the retained
   MQTT inventory if a zone is renamed, enabled, disabled, or reprogrammed.
 - Publishes zone activity, panel state, backup-battery status, firmware data,
-  RF/Z-Wave diagnostics, and transient events to MQTT.
+  normalized panel/zone trouble conditions, alarm memory, RF/Z-Wave
+  diagnostics, and transient events to MQTT.
+- Exposes the GC2 chime and announcement sounder volume as a synchronized Home
+  Assistant slider, so automations can lower it overnight and restore it later.
 - Uses a retained MQTT Last Will so Home Assistant marks the GC2 entities
   unavailable if the ESP32 or network disappears.
 
@@ -117,6 +122,10 @@ open `http://192.168.4.1/`. Configure:
 - Home Assistant GC2-integration discovery, normally enabled.
 
 The setup access point shuts down after the station connection succeeds.
+Once settings have been saved, losing Wi-Fi never reopens the setup access
+point: the bridge remains provisioned and continues retrying the saved network.
+Hold BOOT for the documented factory reset to erase settings and authorize a
+new provisioning session.
 
 ## Tera Term and console modes
 
@@ -177,8 +186,14 @@ topic, topics resemble:
 2gig/gc2/gc2_bridge_aabbccddeeff/manifest
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/state
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/status
+2gig/gc2/gc2_bridge_aabbccddeeff/panel/security
+2gig/gc2/gc2_bridge_aabbccddeeff/panel/trouble
+2gig/gc2/gc2_bridge_aabbccddeeff/panel/trouble/00
+2gig/gc2/gc2_bridge_aabbccddeeff/panel/alarm_memory
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/set
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/bypass/set
+2gig/gc2/gc2_bridge_aabbccddeeff/panel/sounder_volume
+2gig/gc2/gc2_bridge_aabbccddeeff/panel/sounder_volume/set
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/command_status
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/battery
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/firmware
@@ -199,10 +214,24 @@ running during the GC2's initial programming poll.
 A zone state payload includes `state` (`ON`, `OFF`, or `UNKNOWN`), programmed
 name, zone type, enabled/input fields, RF ID, raw panel values, last-seen
 uptime, per-zone `battery_known`/`battery_low` fields, and separate bypass
-fields. The bridge initializes state from the panel's read-only `zones` query,
+fields. It also contains normalized `trouble_active`, `tamper`, and
+`supervision_lost` fields. The bridge initializes state from the panel's read-only `zones` query,
 then conditions live RF packets and open/restore messages. A bypassed open
 sensor remains `ON`; the bridge never hides an open contact by reporting it
 closed.
+
+`panel/trouble` contains retained aggregate counts. Each populated
+`panel/trouble/NN` topic contains the GC2 trouble-memory slot, zone, description,
+active/restored state, acknowledgement state, and panel ticks. Empty slots are
+deleted after each complete poll. `panel/security` is conditioned from the
+read-only `panel_status` command and reports AC loss, panel/siren tamper, RF
+jamming, communication failures, and reset-required state. The similarly named
+GC2 simulator commands are never used.
+
+`panel/alarm_memory` recovers the panel's retained alarm-memory flags after the
+UART starts and after network connectivity returns. It is refreshed every five
+minutes so an ESP32 or Home Assistant restart does not silently discard a
+latched GC2 alarm indication.
 
 An observed-user payload contains the numeric GC2 user ID, its last reported
 action, origin, and bridge uptime. User `0` is the GC2 remote/system actor seen
@@ -241,7 +270,17 @@ Physical zone bypass uses `panel/bypass/set` with a non-retained JSON payload:
 `false` requests an unbypass. Only zones 1 through 74 are accepted. Each
 request waits for the shared persistent unlock if necessary, then maps to the
 panel's literal `bypass <zone>` or `unbypass <zone>` command. Stale retained
-alarm and bypass commands are deleted before the bridge subscribes.
+alarm, bypass, and volume commands are deleted before the bridge subscribes.
+
+Chime and announcement volume uses the GC2 console's normalized
+`sounder_volume 0-100` control. Publish an integer from `0` through `100` to
+the non-retained `panel/sounder_volume/set` topic. The bridge sends only that
+allow-listed command after debug access is confirmed. It does not update the
+retained state optimistically: it reads the applied `sounder_volume` from the
+panel's read-only `sounder_status` output. That status is polled after a change
+and every 30 seconds, keeping Home Assistant synchronized with the panel.
+Strict `/listen on` mode rejects volume control along with the other MQTT
+controls.
 
 The retained `uart/baud` topic reports `detecting` or the active numeric baud.
 The bridge mirrors that applied value as a retained message on `uart/baud/set`
@@ -275,7 +314,11 @@ creates:
 - one `binary_sensor` for every active programmed zone, using the programmed
   name and appropriate device class;
 - one diagnostic low-battery binary sensor for every zone;
+- zone trouble, tamper, and supervision-loss binary sensors;
+- panel trouble, tamper, siren tamper, RF-jam, AC-loss, communication-failure,
+  reset-required, and latched-alarm-memory binary sensors;
 - one physical bypass switch for every zone;
+- one chime and announcement volume slider from 0% through 100%;
 - panel battery, firmware, UART, debug-unlock, command-status, and console
   diagnostic sensors;
 - a diagnostic sensor for every GC2 user ID observed in panel activity.
@@ -338,7 +381,9 @@ isolated network and equipment you are authorized to service.
 
 The provisioning network is open by design. Provision in a controlled location
 because anyone within radio range can submit new settings while it is active.
-The setup network is disabled after a successful connection.
+The setup network is disabled after a successful connection and is never
+reopened merely because the configured Wi-Fi network is unavailable. A physical
+10-second BOOT-button factory reset is required before it can return.
 
 Monitor and maintenance modes deliberately keep the GC2 debug console unlocked;
 `/listen on` is the only strict zero-transmit mode and pauses those checks.

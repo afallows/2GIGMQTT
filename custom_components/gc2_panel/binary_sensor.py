@@ -40,6 +40,42 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data
+    async_add_entities(
+        [
+            Gc2PanelSecuritySensor(
+                coordinator, "panel_trouble", "Panel trouble",
+                "trouble_summary", "active", BinarySensorDeviceClass.PROBLEM
+            ),
+            Gc2PanelSecuritySensor(
+                coordinator, "panel_tamper", "Panel tamper",
+                "security", "panel_tamper", BinarySensorDeviceClass.TAMPER
+            ),
+            Gc2PanelSecuritySensor(
+                coordinator, "siren_tamper", "Siren tamper",
+                "security", "siren_tamper", BinarySensorDeviceClass.TAMPER
+            ),
+            Gc2PanelSecuritySensor(
+                coordinator, "rf_jam", "RF jamming",
+                "security", "rf_jam", BinarySensorDeviceClass.PROBLEM
+            ),
+            Gc2PanelSecuritySensor(
+                coordinator, "ac_loss", "AC power loss",
+                "security", "ac_loss", BinarySensorDeviceClass.PROBLEM
+            ),
+            Gc2PanelSecuritySensor(
+                coordinator, "communication_failure", "Communication failure",
+                "security", "communication_failure", BinarySensorDeviceClass.PROBLEM
+            ),
+            Gc2PanelSecuritySensor(
+                coordinator, "reset_required", "Panel reset required",
+                "security", "reset_required", BinarySensorDeviceClass.PROBLEM
+            ),
+            Gc2PanelSecuritySensor(
+                coordinator, "alarm_memory", "Latched alarm memory",
+                "alarm_memory", "latched", BinarySensorDeviceClass.PROBLEM
+            ),
+        ]
+    )
     known: set[int] = set()
 
     @callback
@@ -50,7 +86,15 @@ async def async_setup_entry(
             entities = []
             for number in sorted(new):
                 entities.extend(
-                    (Gc2Zone(coordinator, number), Gc2ZoneBattery(coordinator, number))
+                    (
+                        Gc2Zone(coordinator, number),
+                        Gc2ZoneBattery(coordinator, number),
+                        Gc2ZoneTrouble(coordinator, number, "trouble_active", "trouble"),
+                        Gc2ZoneTrouble(coordinator, number, "tamper", "tamper"),
+                        Gc2ZoneTrouble(
+                            coordinator, number, "supervision_lost", "supervision loss"
+                        ),
+                    )
                 )
             async_add_entities(entities)
 
@@ -130,3 +174,86 @@ class Gc2ZoneBattery(Gc2Entity, BinarySensorEntity):
             "rf_id": self.zone.get("rf_id"),
             "last_seen_ms": self.zone.get("last_seen_ms"),
         }
+
+
+class Gc2ZoneTrouble(Gc2Entity, BinarySensorEntity):
+    """One normalized security trouble for a panel zone."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, number: int, field: str, label: str) -> None:
+        super().__init__(coordinator)
+        self.number = number
+        self.field = field
+        self.label = label
+        self._attr_unique_id = (
+            f"{coordinator.root_topic.replace('/', '_')}_zone_{number:02d}_{field}"
+        )
+
+    @property
+    def zone(self) -> dict[str, Any]:
+        return self.coordinator.data.zones.get(self.number, {})
+
+    @property
+    def name(self) -> str:
+        return f"{self.zone.get('name') or f'Zone {self.number}'} {self.label}"
+
+    @property
+    def available(self) -> bool:
+        return super().available and bool(self.zone)
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.zone.get("trouble_known", False):
+            return None
+        return bool(self.zone.get(self.field, False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "zone": self.number,
+            "summary": self.zone.get("trouble_summary"),
+        }
+
+
+class Gc2PanelSecuritySensor(Gc2Entity, BinarySensorEntity):
+    """A retained panel-wide security condition."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self, coordinator, key: str, name: str, source: str, field: str,
+        device_class: BinarySensorDeviceClass
+    ) -> None:
+        super().__init__(coordinator)
+        self.source = source
+        self.field = field
+        self._attr_unique_id = f"{coordinator.root_topic.replace('/', '_')}_{key}"
+        self._attr_name = name
+        self._attr_device_class = device_class
+
+    @property
+    def snapshot(self) -> dict[str, Any]:
+        return getattr(self.coordinator.data, self.source)
+
+    @property
+    def available(self) -> bool:
+        return super().available and bool(self.snapshot.get("known", False))
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.snapshot.get("known", False):
+            return None
+        return bool(self.snapshot.get(self.field, False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        if self.source == "trouble_summary":
+            attributes = dict(self.snapshot)
+            attributes["entries"] = [
+                self.coordinator.data.troubles[slot]
+                for slot in sorted(self.coordinator.data.troubles)
+            ]
+            return attributes
+        return dict(self.snapshot)

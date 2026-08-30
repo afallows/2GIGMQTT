@@ -27,6 +27,12 @@ constexpr uint32_t kZoneStateInitialDelayMs = 8000;
 constexpr uint32_t kZoneStateRefreshMs = 30000;
 constexpr uint32_t kZoneTroubleInitialDelayMs = 10000;
 constexpr uint32_t kZoneTroubleRefreshMs = 30000;
+constexpr uint32_t kSounderStatusInitialDelayMs = 12000;
+constexpr uint32_t kSounderStatusRefreshMs = 30000;
+constexpr uint32_t kPanelStatusInitialDelayMs = 14000;
+constexpr uint32_t kPanelStatusRefreshMs = 60000;
+constexpr uint32_t kAlarmMemoryInitialDelayMs = 16000;
+constexpr uint32_t kAlarmMemoryRefreshMs = 5UL * 60UL * 1000UL;
 
 constexpr uint32_t kMqttReconnectDelayMs = 5000;
 constexpr uint32_t kMqttPublishIntervalMs = 25;
@@ -35,7 +41,7 @@ constexpr uint16_t kMqttBufferSize = 2048;
 constexpr uint16_t kMqttSocketTimeoutSeconds = 2;
 
 constexpr uint32_t kWifiConnectTimeoutMs = 30000;
-constexpr uint32_t kWifiReconnectPortalDelayMs = 60000;
+constexpr uint32_t kWifiReconnectIntervalMs = 30000;
 constexpr uint32_t kFactoryResetHoldMs = 10000;
 
 constexpr size_t kPanelRxBufferSize = 8192;

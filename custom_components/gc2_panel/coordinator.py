@@ -18,9 +18,20 @@ _LOGGER = logging.getLogger(__name__)
 class Gc2Coordinator(DataUpdateCoordinator[Gc2Snapshot]):
     """Condition retained GC2 MQTT topics into one panel snapshot."""
 
-    def __init__(self, hass: HomeAssistant, root_topic: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        root_topic: str,
+        device_id: str,
+        device_name: str,
+    ) -> None:
         super().__init__(hass, _LOGGER, name=f"GC2 {root_topic}")
         self.root_topic = root_topic.rstrip("/")
+        # Device registry identifiers must never depend on retained MQTT
+        # delivery order. The manifest may arrive before or after individual
+        # platforms are set up, so use config-entry data captured at discovery.
+        self.device_id = device_id
+        self.device_name = device_name
         self.data = Gc2Snapshot()
         self._unsubscribe = None
 

@@ -1,0 +1,1042 @@
+# Complete Lovelace raw configuration for a GC2-focused security dashboard.
+# Requires the HACS frontend cards "Button Card" and "Auto Entities".
+# See home_assistant/README.md before installing.
+
+button_card_templates:
+  gc2_alarm_status:
+    show_icon: true
+    show_name: true
+    show_state: true
+    show_label: true
+    name: Home security
+    icon: >
+      [[[
+        const icons = {
+          disarmed: "mdi:shield-home-outline",
+          arming: "mdi:shield-sync-outline",
+          armed_home: "mdi:shield-home",
+          armed_away: "mdi:shield-lock",
+          pending: "mdi:shield-alert-outline",
+          triggered: "mdi:shield-alert"
+        };
+        return icons[entity.state] || "mdi:shield-off-outline";
+      ]]]
+    state_display: >
+      [[[
+        const labels = {
+          disarmed: "Disarmed",
+          arming: "Arming…",
+          armed_home: "Armed stay",
+          armed_away: "Armed away",
+          pending: "Entry delay",
+          triggered: "ALARM"
+        };
+        return labels[entity.state] || "Panel unavailable";
+      ]]]
+    label: >
+      [[[
+        const origin = entity.attributes.origin;
+        const userId = entity.attributes.user;
+        if (userId !== undefined && userId !== null)
+          return `Last changed by user ${userId}${origin ? ` · ${origin}` : ""}`;
+        return origin ? `Last changed · ${origin}` : "Live state from the 2GIG GC2";
+      ]]]
+    custom_fields:
+      eyebrow: SECURITY OVERVIEW
+      summary: >
+        [[[
+          const zones = Object.values(states).filter((item) =>
+            item.entity_id.startsWith("binary_sensor.") && item.attributes.zone_type !== undefined
+          );
+          const issues = zones.filter((item) =>
+            item.attributes.battery_low || item.attributes.supervision_lost ||
+            item.attributes.tamper || item.attributes.trouble_active
+          ).length;
+          if (entity.state === "triggered") return "Alarm event in progress — verify the property now";
+          if (issues) return `${issues} sensor${issues === 1 ? "" : "s"} need attention`;
+          return `${zones.length} zones connected and reporting`;
+        ]]]
+      stats: >
+        [[[
+          const zones = Object.values(states).filter((item) =>
+            item.entity_id.startsWith("binary_sensor.") && item.attributes.zone_type !== undefined
+          );
+          const active = zones.filter((item) => item.state === "on").length;
+          const bypassed = zones.filter((item) => item.attributes.bypassed).length;
+          const issues = zones.filter((item) =>
+            item.attributes.battery_low || item.attributes.supervision_lost ||
+            item.attributes.tamper || item.attributes.trouble_active
+          ).length;
+          const chip = (icon, value, label, color) => `
+            <span style="display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:14px;
+              background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.10);min-width:105px">
+              <ha-icon icon="${icon}" style="width:19px;height:19px;color:${color}"></ha-icon>
+              <span><b style="font-size:15px">${value}</b><small style="display:block;opacity:.68;font-size:9px;
+                letter-spacing:.7px;text-transform:uppercase">${label}</small></span>
+            </span>`;
+          return `<div style="display:flex;flex-wrap:wrap;gap:8px">
+            ${chip("mdi:vector-square", zones.length, "Zones", "#79cdf4")}
+            ${chip("mdi:door-open", active, "Active", active ? "#ffc761" : "#7ee2c1")}
+            ${chip("mdi:shield-off-outline", bypassed, "Bypassed", bypassed ? "#ffc761" : "#7ee2c1")}
+            ${chip("mdi:alert-circle-outline", issues, "Issues", issues ? "#ff727b" : "#7ee2c1")}
+          </div>`;
+        ]]]
+    tap_action:
+      action: more-info
+    hold_action:
+      action: more-info
+    styles:
+      grid:
+        - grid-template-areas: '"eyebrow eyebrow" "i s" "i n" "i summary" "i l" "stats stats"'
+        - grid-template-columns: 104px 1fr
+        - grid-template-rows: min-content min-content min-content min-content min-content min-content
+      card:
+        - min-height: 255px
+        - padding: 28px
+        - border-radius: 30px
+        - overflow: hidden
+        - border: >
+            [[[
+              if (entity.state === "triggered") return "2px solid var(--error-color)";
+              if (["pending", "arming"].includes(entity.state)) return "1px solid var(--warning-color)";
+              if (entity.state === "unavailable") return "1px solid var(--disabled-text-color)";
+              return "1px solid rgba(255,255,255,.10)";
+            ]]]
+        - background: >
+            [[[
+              if (entity.state === "triggered")
+                return "radial-gradient(circle at 84% 15%, rgba(255,80,80,.26), transparent 31%), linear-gradient(135deg, rgba(125,18,28,.96), rgba(42,10,17,.98))";
+              if (entity.state === "armed_away")
+                return "radial-gradient(circle at 84% 15%, rgba(71,147,255,.24), transparent 31%), linear-gradient(135deg, rgba(17,68,125,.96), rgba(10,27,52,.98))";
+              if (entity.state === "armed_home")
+                return "radial-gradient(circle at 84% 15%, rgba(55,205,164,.22), transparent 31%), linear-gradient(135deg, rgba(15,99,82,.96), rgba(8,41,38,.98))";
+              if (["pending", "arming"].includes(entity.state))
+                return "radial-gradient(circle at 84% 15%, rgba(255,190,74,.22), transparent 31%), linear-gradient(135deg, rgba(116,72,14,.96), rgba(48,30,8,.98))";
+              return "radial-gradient(circle at 84% 15%, rgba(47,179,255,.20), transparent 31%), linear-gradient(135deg, rgba(20,61,82,.98), rgba(14,31,43,.98))";
+            ]]]
+        - box-shadow: 0 18px 44px rgba(0,0,0,.28)
+      icon:
+        - width: 72px
+        - color: >
+            [[[
+              if (entity.state === "triggered") return "#ff727b";
+              if (["pending", "arming"].includes(entity.state)) return "#ffc761";
+              if (entity.state === "disarmed") return "#6dc9f5";
+              return "#7ee2c1";
+            ]]]
+        - filter: drop-shadow(0 8px 18px rgba(0,0,0,.28))
+      name:
+        - justify-self: start
+        - font-size: 15px
+        - font-weight: 500
+        - color: rgba(255,255,255,.72)
+      state:
+        - justify-self: start
+        - font-size: clamp(30px, 4vw, 48px)
+        - font-weight: 750
+        - line-height: 1
+        - letter-spacing: -1.3px
+        - color: white
+      label:
+        - justify-self: start
+        - font-size: 12px
+        - color: rgba(255,255,255,.56)
+        - margin-top: 6px
+      custom_fields:
+        eyebrow:
+          - justify-self: start
+          - font-size: 10px
+          - font-weight: 700
+          - letter-spacing: 1.8px
+          - color: rgba(255,255,255,.54)
+          - padding-bottom: 18px
+        summary:
+          - justify-self: start
+          - font-size: 14px
+          - font-weight: 600
+          - color: rgba(255,255,255,.86)
+          - padding-top: 8px
+        stats:
+          - justify-self: stretch
+          - padding-top: 24px
+
+  gc2_zone:
+    show_icon: true
+    show_name: true
+    show_state: true
+    show_label: true
+    name: >
+      [[[
+        const value = (entity.attributes.friendly_name || entity.entity_id)
+          .replace(/^2GIG GC2 Panel\s*/i, "").trim();
+        return value.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+      ]]]
+    icon: >
+      [[[
+        const active = entity.state === "on";
+        const dc = entity.attributes.device_class || "opening";
+        const text = `${entity.attributes.friendly_name || ""} ${entity.attributes.zone_type || ""}`.toLowerCase();
+        if (text.includes("glass break")) return "mdi:glass-fragile";
+        if (text.includes("freezer")) return "mdi:snowflake-thermometer";
+        if (text.includes("temperature")) return "mdi:thermometer-alert";
+        if (text.includes("keyfob")) return "mdi:key-wireless";
+        const icons = {
+          door: active ? "mdi:door-open" : "mdi:door-closed",
+          garage_door: active ? "mdi:garage-open" : "mdi:garage",
+          window: active ? "mdi:window-open-variant" : "mdi:window-closed-variant",
+          motion: "mdi:motion-sensor",
+          moisture: active ? "mdi:water-alert" : "mdi:water-check-outline",
+          smoke: active ? "mdi:smoke-detector-alert" : "mdi:smoke-detector-outline",
+          carbon_monoxide: active ? "mdi:molecule-co" : "mdi:molecule-co",
+          gas: active ? "mdi:gas-cylinder" : "mdi:gas-burner",
+          sound: "mdi:glass-fragile",
+          opening: active ? "mdi:checkbox-blank-circle" : "mdi:checkbox-blank-circle-outline"
+        };
+        return icons[dc] || icons.opening;
+      ]]]
+    state_display: >
+      [[[
+        if (entity.state === "unavailable") return "Unavailable";
+        if (entity.state === "unknown") return "Unknown";
+        const active = entity.state === "on";
+        const dc = entity.attributes.device_class || "opening";
+        const text = `${entity.attributes.friendly_name || ""} ${entity.attributes.zone_type || ""}`.toLowerCase();
+        if (text.includes("glass break")) return active ? "GLASS" : "Clear";
+        if (text.includes("temperature") || text.includes("freezer")) return active ? "TEMP ALARM" : "Normal";
+        if (text.includes("keyfob")) return active ? "Active" : "Idle";
+        if (["door", "garage_door", "window", "opening"].includes(dc))
+          return active ? "Open" : "Closed";
+        if (dc === "motion") return active ? "Motion" : "Clear";
+        if (dc === "moisture") return active ? "WET" : "Dry";
+        if (dc === "smoke") return active ? "SMOKE" : "Clear";
+        if (dc === "carbon_monoxide") return active ? "CO ALARM" : "Clear";
+        if (dc === "gas") return active ? "GAS ALARM" : "Clear";
+        return active ? "Active" : "Normal";
+      ]]]
+    label: >
+      [[[
+        const issues = [];
+        if (entity.attributes.bypassed) issues.push("Bypassed");
+        if (entity.attributes.battery_low) issues.push("Low battery");
+        if (entity.attributes.supervision_lost) issues.push("Supervision lost");
+        if (entity.attributes.tamper) issues.push("Tamper detected");
+        if (entity.attributes.trouble_active && !entity.attributes.tamper && !entity.attributes.supervision_lost)
+          issues.push("Sensor trouble");
+        return issues.length ? issues.join(" · ") : "Protected";
+      ]]]
+    custom_fields:
+      zone: >
+        [[[
+          const number = Number(entity.attributes.number);
+          return Number.isFinite(number) ? `ZONE ${String(number).padStart(2, "0")}` : "GC2 ZONE";
+        ]]]
+      health: >
+        [[[
+          const badge = (icon, color, title) =>
+            `<ha-icon icon="${icon}" title="${title}" style="width:16px;height:16px;color:${color}"></ha-icon>`;
+          const muted = "var(--disabled-text-color)";
+          const good = "var(--success-color)";
+          const warn = "var(--warning-color)";
+          const bad = "var(--error-color)";
+          const battery = entity.attributes.battery_low
+            ? badge("mdi:battery-alert", bad, "Low battery")
+            : entity.attributes.battery_known
+              ? badge("mdi:battery-check", good, "Battery normal")
+              : badge("mdi:battery-unknown", muted, "Battery not yet reported");
+          const supervision = entity.attributes.supervision_lost
+            ? badge("mdi:radio-tower", bad, "Supervision lost")
+            : entity.attributes.trouble_known
+              ? badge("mdi:radio-tower", good, "Supervision normal")
+              : badge("mdi:radio-tower", muted, "Supervision not yet reported");
+          const tamper = entity.attributes.tamper
+            ? badge("mdi:shield-alert", bad, "Tamper")
+            : entity.attributes.trouble_known
+              ? badge("mdi:shield-check", good, "No tamper")
+              : badge("mdi:shield-outline", muted, "Tamper state pending");
+          const bypass = entity.attributes.bypassed
+            ? badge("mdi:shield-off", warn, "Bypassed")
+            : "";
+          return `<span style="display:flex;gap:5px;align-items:center">${bypass}${battery}${supervision}${tamper}</span>`;
+        ]]]
+    tap_action:
+      action: more-info
+    hold_action:
+      action: more-info
+    styles:
+      grid:
+        - grid-template-areas: '"zone health" "i health" "n n" "s l"'
+        - grid-template-columns: 1fr min-content
+        - grid-template-rows: min-content 34px min-content min-content
+      card:
+        - min-height: 116px
+        - padding: 13px 14px
+        - border-radius: 20px
+        - overflow: hidden
+        - border: >
+            [[[
+              if (entity.state === "unavailable") return "1px dashed var(--disabled-text-color)";
+              if (entity.attributes.tamper || entity.attributes.supervision_lost || entity.attributes.battery_low)
+                return "1px solid var(--error-color)";
+              if (entity.attributes.bypassed) return "1px solid var(--warning-color)";
+              if (entity.state === "on") return "1px solid var(--warning-color)";
+              return "1px solid color-mix(in srgb, var(--divider-color) 72%, transparent)";
+            ]]]
+        - background: >
+            [[[
+              if (entity.attributes.tamper || entity.attributes.supervision_lost)
+                return "linear-gradient(145deg, rgba(170,30,40,.22), var(--ha-card-background))";
+              if (entity.attributes.bypassed)
+                return "linear-gradient(145deg, rgba(190,120,20,.20), var(--ha-card-background))";
+              if (entity.state === "on")
+                return "linear-gradient(145deg, rgba(200,125,20,.14), var(--ha-card-background))";
+              return "linear-gradient(145deg, color-mix(in srgb, var(--ha-card-background) 97%, white 3%), var(--ha-card-background))";
+            ]]]
+        - box-shadow: 0 7px 18px rgba(0,0,0,.10)
+      icon:
+        - justify-self: start
+        - width: 29px
+        - color: >
+            [[[
+              if (entity.state === "unavailable") return "var(--disabled-text-color)";
+              if (entity.attributes.tamper || entity.attributes.supervision_lost || entity.attributes.battery_low)
+                return "var(--error-color)";
+              if (entity.attributes.bypassed || entity.state === "on") return "var(--warning-color)";
+              return "var(--primary-color)";
+            ]]]
+      name:
+        - justify-self: start
+        - align-self: end
+        - width: 100%
+        - padding-top: 5px
+        - font-size: 13px
+        - font-weight: 700
+        - white-space: normal
+        - line-height: 1.2
+        - text-align: left
+      state:
+        - justify-self: start
+        - padding-top: 7px
+        - font-size: 12px
+        - font-weight: 700
+        - color: >
+            [[[
+              if (entity.attributes.tamper || entity.attributes.supervision_lost || entity.attributes.battery_low)
+                return "var(--error-color)";
+              if (entity.attributes.bypassed || entity.state === "on") return "var(--warning-color)";
+              return "var(--secondary-text-color)";
+            ]]]
+      label:
+        - justify-self: end
+        - align-self: end
+        - padding-top: 7px
+        - font-size: 10px
+        - color: var(--secondary-text-color)
+        - white-space: nowrap
+      custom_fields:
+        zone:
+          - justify-self: start
+          - font-size: 8px
+          - font-weight: 700
+          - letter-spacing: 1px
+          - color: var(--secondary-text-color)
+        health:
+          - justify-self: end
+          - align-self: start
+          - padding: 4px 6px
+          - border-radius: 9px
+          - background: rgba(127,127,127,.08)
+
+  gc2_attention_zone:
+    template: gc2_zone
+    tap_action:
+      action: >
+        [[[
+          const number = Number(entity.attributes.number);
+          const root = entity.attributes.bridge_topic;
+          const switches = Object.values(states).filter((item) =>
+            item.entity_id.startsWith("switch.") &&
+            Number(item.attributes.zone) === number
+          );
+          const control = switches.find((item) =>
+            root && item.attributes.bridge_topic === root
+          ) || switches[0];
+          return control && !["unknown", "unavailable"].includes(control.state)
+            ? "call-service"
+            : "more-info";
+        ]]]
+      service: >
+        [[[
+          const number = Number(entity.attributes.number);
+          const root = entity.attributes.bridge_topic;
+          const switches = Object.values(states).filter((item) =>
+            item.entity_id.startsWith("switch.") &&
+            Number(item.attributes.zone) === number
+          );
+          const control = switches.find((item) =>
+            root && item.attributes.bridge_topic === root
+          ) || switches[0];
+          const bypassed = entity.attributes.bypassed || control?.state === "on";
+          return bypassed ? "switch.turn_off" : "switch.turn_on";
+        ]]]
+      service_data:
+        entity_id: >
+          [[[
+            const number = Number(entity.attributes.number);
+            const root = entity.attributes.bridge_topic;
+            const switches = Object.values(states).filter((item) =>
+              item.entity_id.startsWith("switch.") &&
+              Number(item.attributes.zone) === number
+            );
+            const control = switches.find((item) =>
+              root && item.attributes.bridge_topic === root
+            ) || switches[0];
+            return control?.entity_id || "";
+          ]]]
+      confirmation:
+        text: >
+          [[[
+            const name = (entity.attributes.friendly_name || `Zone ${entity.attributes.number}`)
+              .replace(/^2GIG GC2 Panel\s*/i, "").trim();
+            const bypassed = Boolean(entity.attributes.bypassed);
+            return bypassed
+              ? `Remove the bypass from ${name} and return it to normal protection?`
+              : `Bypass ${name}? The panel will ignore this sensor until the bypass is removed.`;
+          ]]]
+    hold_action:
+      action: more-info
+
+  gc2_alarm_action:
+    show_state: false
+    show_label: true
+    label: '[[[ return variables.subtitle || ""; ]]]'
+    icon: '[[[ return variables.icon; ]]]'
+    name: '[[[ return variables.name; ]]]'
+    tap_action:
+      action: call-service
+      service: '[[[ return variables.service; ]]]'
+      service_data:
+        entity_id: '[[[ return entity.entity_id; ]]]'
+      confirmation:
+        text: '[[[ return variables.confirmation; ]]]'
+    styles:
+      grid:
+        - grid-template-areas: '"i n" "i l"'
+        - grid-template-columns: 44px 1fr
+      card:
+        - min-height: 82px
+        - padding: 16px
+        - border-radius: 20px
+        - border: 1px solid color-mix(in srgb, var(--divider-color) 70%, transparent)
+        - background: linear-gradient(145deg, color-mix(in srgb, var(--ha-card-background) 96%, white 4%), var(--ha-card-background))
+        - box-shadow: 0 8px 20px rgba(0,0,0,.12)
+      icon:
+        - width: 28px
+        - color: '[[[ return variables.color || "var(--primary-color)"; ]]]'
+      name:
+        - justify-self: start
+        - font-size: 14px
+        - font-weight: 700
+      label:
+        - justify-self: start
+        - font-size: 10px
+        - color: var(--secondary-text-color)
+        - padding-top: 3px
+
+
+  gc2_panel_alert:
+    show_icon: true
+    show_name: true
+    show_state: false
+    show_label: true
+    name: >
+      [[[
+        return (entity.attributes.friendly_name || "Panel alert")
+          .replace(/^2GIG GC2 Panel\s*/i, "").trim();
+      ]]]
+    label: Check the GC2 panel
+    icon: mdi:alert-circle
+    styles:
+      grid:
+        - grid-template-areas: '"i n" "i l"'
+        - grid-template-columns: 42px 1fr
+      card:
+        - min-height: 84px
+        - padding: 15px
+        - border-radius: 20px
+        - border: 1px solid color-mix(in srgb, var(--error-color) 75%, transparent)
+        - background: radial-gradient(circle at 90% 10%, rgba(255,70,80,.16), transparent 48%), var(--ha-card-background)
+      icon:
+        - width: 27px
+        - color: var(--error-color)
+      name:
+        - justify-self: start
+        - font-size: 13px
+        - font-weight: 700
+      label:
+        - justify-self: start
+        - font-size: 10px
+        - color: var(--secondary-text-color)
+
+  gc2_clear:
+    show_icon: true
+    show_name: true
+    show_state: false
+    show_label: true
+    name: All clear
+    label: Every reporting zone is secure and healthy
+    icon: mdi:shield-check
+    styles:
+      grid:
+        - grid-template-areas: '"i n" "i l"'
+        - grid-template-columns: 48px 1fr
+      card:
+        - min-height: 88px
+        - padding: 17px
+        - border-radius: 21px
+        - border: 1px solid color-mix(in srgb, var(--success-color) 32%, var(--divider-color))
+        - background: radial-gradient(circle at 92% 15%, rgba(50,190,135,.12), transparent 45%), var(--ha-card-background)
+      icon:
+        - width: 30px
+        - color: var(--success-color)
+      name:
+        - justify-self: start
+        - font-size: 15px
+        - font-weight: 700
+      label:
+        - justify-self: start
+        - font-size: 11px
+        - color: var(--secondary-text-color)
+
+views:
+  - title: Security
+    path: security
+    icon: mdi:shield-home
+    type: sections
+    max_columns: 3
+    dense_section_placement: true
+    visible:
+      # Preserved from the previous dashboard. Edit these in the visual editor
+      # if another Home Assistant user should see this view.
+      - user: 8af0b7aa61a94422959b3a5dea5a0085
+      - user: 2e32d693479a4d3492352c4562497bf0
+    sections:
+      - type: grid
+        column_span: 3
+        cards:
+          - type: heading
+            heading: Home security
+            heading_style: title
+            icon: mdi:shield-home
+          - type: custom:auto-entities
+            card:
+              type: grid
+              columns: 1
+              square: false
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: alarm_control_panel
+                  options:
+                    type: custom:button-card
+                    template: gc2_alarm_status
+            sort:
+              method: name
+            show_empty: false
+            grid_options:
+              columns: full
+          - type: custom:auto-entities
+            card:
+              type: grid
+              columns: 1
+              square: false
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: alarm_control_panel
+                  options:
+                    type: horizontal-stack
+                    cards:
+                      - type: custom:button-card
+                        entity: this.entity_id
+                        template: gc2_alarm_action
+                        variables:
+                          name: Arm stay
+                          subtitle: Secure the perimeter
+                          icon: mdi:shield-home
+                          color: var(--success-color)
+                          service: alarm_control_panel.alarm_arm_home
+                          confirmation: Arm the system in Stay mode?
+                      - type: custom:button-card
+                        entity: this.entity_id
+                        template: gc2_alarm_action
+                        variables:
+                          name: Arm away
+                          subtitle: Secure the entire home
+                          icon: mdi:shield-lock
+                          color: var(--primary-color)
+                          service: alarm_control_panel.alarm_arm_away
+                          confirmation: Arm the system in Away mode?
+                      - type: custom:button-card
+                        entity: this.entity_id
+                        template: gc2_alarm_action
+                        variables:
+                          name: Disarm
+                          subtitle: Return to standby
+                          icon: mdi:shield-off-outline
+                          color: var(--warning-color)
+                          service: alarm_control_panel.alarm_disarm
+                          confirmation: Disarm the security system?
+            show_empty: false
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Attention
+            heading_style: title
+            icon: mdi:shield-alert-outline
+          - type: custom:auto-entities
+            card:
+              type: vertical-stack
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  state: "on"
+                  attributes:
+                    zone_type: "*"
+                  options:
+                    type: custom:button-card
+                    template: gc2_attention_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    bypassed: true
+                  options:
+                    type: custom:button-card
+                    template: gc2_attention_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    battery_low: true
+                  options:
+                    type: custom:button-card
+                    template: gc2_attention_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    supervision_lost: true
+                  options:
+                    type: custom:button-card
+                    template: gc2_attention_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    tamper: true
+                  options:
+                    type: custom:button-card
+                    template: gc2_attention_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  state: "on"
+                  name: "/(Panel trouble|Panel tamper|Siren tamper|RF jamming|AC power loss|Communication failure|Panel reset required|Latched alarm memory)$/"
+                  options:
+                    type: custom:button-card
+                    template: gc2_panel_alert
+            unique: true
+            sort:
+              method: name
+              ignore_case: true
+            else:
+              type: custom:button-card
+              template: gc2_clear
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Panel health
+            heading_style: title
+            icon: mdi:heart-pulse
+          - type: custom:auto-entities
+            card:
+              type: entities
+              show_header_toggle: false
+              state_color: true
+            filter:
+              template: >
+                {% set gc2 = integration_entities('gc2_panel') %}
+                {% set presets = gc2
+                  | select('match', '^select\\.')
+                  | select('search', 'chime_and_announcement_volume_preset$')
+                  | list %}
+                {% if presets %}
+                  {{ presets }}
+                {% else %}
+                  {{ gc2
+                    | select('match', '^number\\.')
+                    | select('search', 'chime_and_announcement_volume$')
+                    | list }}
+                {% endif %}
+              include:
+                - integration: gc2_panel
+                  name: "/(Backup battery|Backup battery voltage|Trouble count|Unacknowledged troubles|Command status|UART baud|Debug unlock)$/"
+                  options:
+                    secondary_info: last-changed
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  name: "/(Panel trouble|Panel tamper|Siren tamper|RF jamming|AC power loss|Communication failure|Panel reset required|Latched alarm memory)$/"
+                  options:
+                    secondary_info: last-changed
+            unique: true
+            sort:
+              method: name
+              ignore_case: true
+            show_empty: false
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Recent activity
+            heading_style: title
+            icon: mdi:history
+            tap_action:
+              action: navigate
+              navigation_path: /logbook
+          - type: custom:auto-entities
+            card:
+              type: logbook
+              hours_to_show: 24
+              name_detail: entity
+              state_filter:
+                - "on"
+                - "off"
+                - disarmed
+                - arming
+                - armed_home
+                - armed_away
+                - pending
+                - triggered
+            card_param: entities
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: alarm_control_panel
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+            unique: true
+            sort:
+              method: name
+              ignore_case: true
+            else:
+              type: custom:button-card
+              template: gc2_clear
+              name: Quiet day
+              label: No GC2 activity in the last 24 hours
+              icon: mdi:weather-night
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Doors & access
+            heading_style: title
+            icon: mdi:door-closed-lock
+          - type: custom:auto-entities
+            card:
+              type: grid
+              columns: 2
+              square: false
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: door
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: garage_door
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+              exclude:
+                - name: "/([Tt]emperature|[Ff]reezer|[Gg]lass [Bb]reak)/"
+            sort:
+              method: name
+              ignore_case: true
+            show_empty: false
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Windows
+            heading_style: title
+            icon: mdi:window-closed-variant
+          - type: custom:auto-entities
+            card:
+              type: grid
+              columns: 5
+              square: false
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: window
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+            sort:
+              method: name
+              ignore_case: true
+            show_empty: false
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Other panel zones
+            heading_style: title
+            icon: mdi:dots-grid
+          - type: custom:auto-entities
+            card:
+              type: grid
+              columns: 2
+              square: false
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: opening
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+              exclude:
+                - name: "/([Tt]emperature|[Ff]reezer|[Gg]lass [Bb]reak)/"
+            sort:
+              method: name
+              ignore_case: true
+            show_empty: false
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Motion
+            heading_style: title
+            icon: mdi:motion-sensor
+          - type: custom:auto-entities
+            card:
+              type: grid
+              columns: 2
+              square: false
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: motion
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+            sort:
+              method: name
+              ignore_case: true
+            show_empty: false
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 1
+        background:
+          color: red
+          opacity: 5
+        cards:
+          - type: heading
+            heading: Life safety
+            heading_style: title
+            icon: mdi:shield-cross-outline
+          - type: custom:auto-entities
+            card:
+              type: grid
+              columns: 2
+              square: false
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: smoke
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: carbon_monoxide
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: gas
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                  name: "/([Gg]lass [Bb]reak)/"
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+            unique: true
+            sort:
+              method: name
+              ignore_case: true
+            show_empty: false
+            grid_options:
+              columns: full
+
+      - type: grid
+        column_span: 1
+        background:
+          color: blue
+          opacity: 5
+        cards:
+          - type: heading
+            heading: Water & environment
+            heading_style: title
+            icon: mdi:home-alert-outline
+          - type: custom:auto-entities
+            card:
+              type: grid
+              columns: 2
+              square: false
+            card_param: cards
+            filter:
+              include:
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                    device_class: moisture
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+                - integration: gc2_panel
+                  domain: binary_sensor
+                  attributes:
+                    zone_type: "*"
+                  name: "/([Tt]emperature|[Ff]reezer)/"
+                  options:
+                    type: custom:button-card
+                    template: gc2_zone
+            unique: true
+            sort:
+              method: name
+              ignore_case: true
+            show_empty: false
+            grid_options:
+              columns: full
+
+
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Response controls
+            heading_style: title
+            icon: mdi:home-lock
+          - type: grid
+            columns: 4
+            square: false
+            cards:
+              - type: tile
+                entity: input_boolean.autolock_enable
+                name: Auto lock
+                vertical: true
+                tap_action:
+                  action: toggle
+              - type: tile
+                entity: lock.smart_code_with_home_connect_technology
+                name: Front door
+                vertical: true
+              - type: tile
+                entity: lock.touchpad_electronic_deadbolt
+                name: Garage door
+                vertical: true
+              - type: tile
+                entity: switch.valve_controller_1
+                name: Water shutoff
+                icon: mdi:pipe-valve
+                vertical: true
+          - type: heading
+            heading: Security lighting
+            heading_style: subtitle
+            icon: mdi:outdoor-lamp
+          - type: grid
+            columns: 4
+            square: false
+            cards:
+              - type: tile
+                entity: switch.in_wall_paddle_switch_qfsw_500s
+                name: Garage light
+                vertical: true
+              - type: tile
+                entity: switch.in_wall_paddle_switch_qfsw_500s_2
+                name: Light 1
+                vertical: true
+              - type: tile
+                entity: switch.in_wall_paddle_switch_qfsw_500s_3
+                name: Light 2
+                vertical: true
+              - type: tile
+                entity: switch.in_wall_paddle_switch_qfsw_500s_4
+                name: Light 3
+                vertical: true

@@ -133,7 +133,11 @@ class Gc2Zone(Gc2Entity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {key: value for key, value in self.zone.items() if key != "state"}
+        attributes = {
+            key: value for key, value in self.zone.items() if key != "state"
+        }
+        attributes["bridge_topic"] = self.coordinator.root_topic
+        return attributes
 
 
 class Gc2ZoneBattery(Gc2Entity, BinarySensorEntity):

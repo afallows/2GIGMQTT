@@ -85,6 +85,9 @@ def test_sounder_volume_accepts_only_normalized_percent() -> None:
     assert not data.apply_message(root, f"{root}/panel/sounder_volume", "101")
     assert not data.apply_message(root, f"{root}/panel/sounder_volume", "loud")
     assert data.sounder_volume == 42
+    assert data.apply_message(root, f"{root}/panel/sounder_volume", "")
+    assert data.sounder_volume is None
+    assert not data.apply_message(root, f"{root}/panel/sounder_volume", "")
 
 
 def test_security_trouble_and_alarm_memory_are_retained() -> None:

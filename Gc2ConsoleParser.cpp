@@ -519,11 +519,50 @@ bool Gc2ConsoleParser::parseChimeName(const String& line) {
     if (volume < 0) return false;
     int nameStart = volume + 3;
     while (nameStart < static_cast<int>(line.length()) &&
+           isspace(static_cast<unsigned char>(line[nameStart]))) {
+        ++nameStart;
+    }
+    const int volumeStart = nameStart;
+    while (nameStart < static_cast<int>(line.length()) &&
+           isdigit(static_cast<unsigned char>(line[nameStart]))) {
+        ++nameStart;
+    }
+    if (nameStart > volumeStart) {
+        const int appliedVolume = line.substring(volumeStart, nameStart).toInt();
+        if (appliedVolume >= 0 && appliedVolume <= 100) {
+            state_.recordSounderVolume(static_cast<uint8_t>(appliedVolume));
+        }
+    }
+    while (nameStart < static_cast<int>(line.length()) &&
            (isspace(static_cast<unsigned char>(line[nameStart])) ||
             isdigit(static_cast<unsigned char>(line[nameStart])))) {
         ++nameStart;
     }
     String name = collapseSpaces(line.substring(nameStart));
+    String lowercase = name;
+    lowercase.toLowerCase();
+    if (lowercase.startsWith("chime")) {
+        int prefixEnd = strlen("chime");
+        while (prefixEnd < static_cast<int>(name.length()) &&
+               (name[prefixEnd] == '_' || name[prefixEnd] == '-' ||
+                isspace(static_cast<unsigned char>(name[prefixEnd])))) {
+            ++prefixEnd;
+        }
+        const int indexStart = prefixEnd;
+        while (prefixEnd < static_cast<int>(name.length()) &&
+               isdigit(static_cast<unsigned char>(name[prefixEnd]))) {
+            ++prefixEnd;
+        }
+        const bool hasChimeIndex = prefixEnd > indexStart;
+        while (prefixEnd < static_cast<int>(name.length()) &&
+               (name[prefixEnd] == '_' || name[prefixEnd] == '-' ||
+                isspace(static_cast<unsigned char>(name[prefixEnd])))) {
+            ++prefixEnd;
+        }
+        if (hasChimeIndex && prefixEnd < static_cast<int>(name.length())) {
+            name = name.substring(prefixEnd);
+        }
+    }
     name.replace('-', ' ');
     name.replace('_', ' ');
     name = collapseSpaces(name);
@@ -602,14 +641,46 @@ bool Gc2ConsoleParser::parseZoneInfo(const String& line) {
 }
 
 bool Gc2ConsoleParser::parseSounderVolume(const String& line) {
-    unsigned int value = 0;
-    if (sscanf(line.c_str(), "sounder_volume %u", &value) != 1) {
-        const int marker = line.indexOf("setting master_volume to");
-        if (marker < 0 ||
-            sscanf(line.c_str() + marker, "setting master_volume to %u",
-                   &value) != 1) {
-            return false;
+    String lowercase = line;
+    lowercase.toLowerCase();
+
+    // A raw "sounder_volume N" line is the console echo of our request, not
+    // proof that the panel applied it. The sounder-status command can also
+    // report a transient DVT/output-channel volume (commonly zero), which is
+    // not the chime/announcement master volume. Only master_volume traces and
+    // live phrases are authoritative for this entity.
+    int valueStart = -1;
+    const int phraseAt = lowercase.indexOf("sounder_play_phrase:");
+    const int phraseVolumeAt =
+        phraseAt < 0 ? -1 : lowercase.indexOf(" vol ", phraseAt);
+    if (phraseVolumeAt >= 0) {
+        valueStart = phraseVolumeAt + strlen(" vol ");
+    } else {
+        for (const char* marker : {
+                 "setting master_volume to", "setting master volume to",
+                 "master_volume:", "master_volume=", "master volume:",
+                 "master volume=", "master_volume ", "master volume "}) {
+            const int markerAt = lowercase.indexOf(marker);
+            if (markerAt >= 0) {
+                valueStart = markerAt + strlen(marker);
+                break;
+            }
         }
+    }
+    if (valueStart < 0) return false;
+    while (valueStart < static_cast<int>(line.length()) &&
+           isspace(static_cast<unsigned char>(line[valueStart]))) {
+        ++valueStart;
+    }
+    if (valueStart >= static_cast<int>(line.length()) ||
+        !isdigit(static_cast<unsigned char>(line[valueStart]))) {
+        return false;
+    }
+    unsigned int value = 0;
+    while (valueStart < static_cast<int>(line.length()) &&
+           isdigit(static_cast<unsigned char>(line[valueStart]))) {
+        value = value * 10 + static_cast<unsigned int>(line[valueStart] - '0');
+        ++valueStart;
     }
     if (value > 100) return false;
     state_.recordSounderVolume(static_cast<uint8_t>(value));
@@ -632,9 +703,9 @@ void Gc2ConsoleParser::processLine(const String& input) {
     if (!recognized) recognized = parseAlarmActivity(line);
     if (!recognized) recognized = parseAlarmState(line);
     if (!recognized) recognized = parseBattery(line);
+    if (!recognized) recognized = parseChimeName(line);
     if (!recognized) recognized = parseSounderVolume(line);
     if (!recognized) recognized = parseBuildInfo(line);
-    if (!recognized) recognized = parseChimeName(line);
 
     if (line.indexOf("SW supervisory packet received") >= 0) {
         state_.recordRfSupervision();

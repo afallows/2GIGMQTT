@@ -6,7 +6,7 @@
 
 namespace {
 constexpr char kHomeAssistantStatusTopic[] = "homeassistant/status";
-constexpr char kFirmwareRelease[] = "0.8.0";
+constexpr char kFirmwareRelease[] = "0.8.2";
 constexpr char kTransportSchema[] = "gc2-mqtt-v1";
 constexpr char const* kBaseDiscoveryObjectIds[] = {
     "panel_state",   "battery_state", "battery_voltage",
@@ -131,6 +131,11 @@ void MqttService::connectIfNeeded() {
     client_.publish(alarmCommandTopic_.c_str(), "", true);
     client_.publish(bypassCommandTopic_.c_str(), "", true);
     client_.publish(sounderVolumeCommandTopic_.c_str(), "", true);
+    if (!state_.sounderVolumeKnown()) {
+        // An old retained value is not authoritative after an ESP restart.
+        // Clear it until the panel supplies a fresh read-back.
+        client_.publish(makeTopic("panel/sounder_volume").c_str(), "", true);
+    }
     client_.subscribe(kHomeAssistantStatusTopic);
     client_.subscribe(baudCommandTopic_.c_str());
     client_.subscribe(alarmCommandTopic_.c_str());
@@ -152,9 +157,13 @@ void MqttService::onMessage(char* topic, uint8_t* payload,
     message.toLowerCase();
     if (strcmp(topic, kHomeAssistantStatusTopic) == 0) {
         if (message == "online" && settings_.discovery) {
-            discoveryStage_ = 0;
-            memset(zoneDiscoveryPublished_, 0,
-                   sizeof(zoneDiscoveryPublished_));
+            // Home Assistant may have been offline when the first retained
+            // discovery deletions were sent. Re-send them now so restored
+            // native MQTT entities cannot survive beside the custom
+            // integration entities.
+            nativeCleanupStage_ = 0;
+            manifestPublished_ = false;
+            nextPublishAt_ = millis();
         }
         return;
     }

@@ -66,6 +66,7 @@ class Gc2ZoneBypass(Gc2Entity, SwitchEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
             "zone": self.number,
+            "bridge_topic": self.coordinator.root_topic,
             "origin": self.zone.get("bypass_origin"),
             "user": self.zone.get("bypass_user"),
             "type": self.zone.get("bypass_type"),

@@ -334,6 +334,9 @@ void Gc2State::recordZoneBypass(uint8_t number, bool bypassed, uint8_t user,
 void Gc2State::recordZoneName(uint8_t number, const String& name) {
     if (number == 0 || number >= kMaxZones || name.isEmpty()) return;
     Gc2ZoneSnapshot& target = zones_[number];
+    // Chime playback text is only a fallback. Once zone_info has supplied a
+    // decoded programmed name, a live phrase must never replace it.
+    if (target.metadataKnown && !target.name.isEmpty()) return;
     if (target.name == name) return;
     target.discovered = true;
     target.name = name;

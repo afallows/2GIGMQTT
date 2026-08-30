@@ -70,6 +70,11 @@ class Gc2Snapshot:
             return True
 
         if suffix == "panel/sounder_volume":
+            if not payload.strip():
+                if self.sounder_volume is None:
+                    return False
+                self.sounder_volume = None
+                return True
             try:
                 value = int(payload.strip())
             except (TypeError, ValueError):

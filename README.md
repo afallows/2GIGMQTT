@@ -29,14 +29,17 @@ front end for the physical GC2 rather than creating a second alarm engine.
 - Publishes zone activity, panel state, backup-battery status, firmware data,
   normalized panel/zone trouble conditions, alarm memory, RF/Z-Wave
   diagnostics, and transient events to MQTT.
-- Exposes the GC2 chime and announcement sounder volume as a synchronized Home
-  Assistant slider, so automations can lower it overnight and restore it later.
+- Exposes the GC2 chime and announcement sounder volume as both a synchronized
+  Home Assistant fine-control slider and a preset dropdown, so automations can
+  lower it overnight and restore it later.
 - Uses a retained MQTT Last Will so Home Assistant marks the GC2 entities
   unavailable if the ESP32 or network disappears.
 
 The current zone-name vocabulary is for the GC2 **EN_US** firmware family,
 including the bench panel's V1.24 build. Unknown vocabulary tokens are ignored;
-the zone number and type remain available as fallbacks.
+the zone number and type remain available as fallbacks. Live chime playback
+labels are used only when no programmed name can be decoded; their internal
+`chime_N-` prefix is never included in a Home Assistant entity name.
 
 ## Hardware
 
@@ -276,9 +279,13 @@ Chime and announcement volume uses the GC2 console's normalized
 `sounder_volume 0-100` control. Publish an integer from `0` through `100` to
 the non-retained `panel/sounder_volume/set` topic. The bridge sends only that
 allow-listed command after debug access is confirmed. It does not update the
-retained state optimistically: it reads the applied `sounder_volume` from the
-panel's read-only `sounder_status` output. That status is polled after a change
-and every 30 seconds, keeping Home Assistant synchronized with the panel.
+retained state from the echoed request: it waits for an applied
+`master_volume` trace or a live sounder/chime line. The read-only
+`sounder_status` command is polled after a change and every 30 seconds, but its
+separate transient output-channel volume is deliberately ignored.
+On restart the bridge clears a stale retained volume until a fresh physical
+panel value is observed, so Home Assistant cannot present yesterday's value as
+current.
 Strict `/listen on` mode rejects volume control along with the other MQTT
 controls.
 
@@ -318,7 +325,10 @@ creates:
 - panel trouble, tamper, siren tamper, RF-jam, AC-loss, communication-failure,
   reset-required, and latched-alarm-memory binary sensors;
 - one physical bypass switch for every zone;
-- one chime and announcement volume slider from 0% through 100%;
+- confirmation-protected bypass and restore actions from dashboard Attention
+  cards, matched to the correct bridge and zone number;
+- one fine-control volume slider from 0% through 100% and a dashboard-friendly
+  preset dropdown for 0%, 10%, 25%, 50%, 75%, and 100%;
 - panel battery, firmware, UART, debug-unlock, command-status, and console
   diagnostic sensors;
 - a diagnostic sensor for every GC2 user ID observed in panel activity.
@@ -333,6 +343,12 @@ the bridge portal, Home Assistant shows the MAC-identified GC2 under
 topic. If discovery was disabled, choose **Add Integration > 2GIG GC2 Panel**
 and enter the full topic, for example
 `2gig/gc2/gc2_bridge_aabbccddeeff`.
+
+The integration uses the MAC-derived config-entry device ID from the beginning
+of platform setup. Its device-registry identity therefore cannot change based
+on which retained MQTT message arrives first. Firmware also re-sends deletion
+messages for the obsolete native MQTT discovery entities whenever Home
+Assistant announces that it is online.
 
 Retained zone records make setup independent of timing. New zones and user IDs
 are added while the integration is running; renamed zones update without

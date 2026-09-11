@@ -6,7 +6,7 @@
 
 namespace {
 constexpr char kHomeAssistantStatusTopic[] = "homeassistant/status";
-constexpr char kFirmwareRelease[] = "0.8.2";
+constexpr char kFirmwareRelease[] = "0.9.0";
 constexpr char kTransportSchema[] = "gc2-mqtt-v1";
 constexpr char const* kBaseDiscoveryObjectIds[] = {
     "panel_state",   "battery_state", "battery_voltage",
@@ -58,6 +58,7 @@ void MqttService::reloadSettings() {
     baudCommandTopic_ = makeTopic("uart/baud/set");
     alarmCommandTopic_ = makeTopic("panel/set");
     bypassCommandTopic_ = makeTopic("panel/bypass/set");
+    zoneChimeCommandTopic_ = makeTopic("panel/zone_chime/set");
     sounderVolumeCommandTopic_ = makeTopic("panel/sounder_volume/set");
     if (settings_.enabled) {
         client_.setServer(settings_.host.c_str(), settings_.port);
@@ -130,6 +131,7 @@ void MqttService::connectIfNeeded() {
     client_.publish(baudCommandTopic_.c_str(), "", true);
     client_.publish(alarmCommandTopic_.c_str(), "", true);
     client_.publish(bypassCommandTopic_.c_str(), "", true);
+    client_.publish(zoneChimeCommandTopic_.c_str(), "", true);
     client_.publish(sounderVolumeCommandTopic_.c_str(), "", true);
     if (!state_.sounderVolumeKnown()) {
         // An old retained value is not authoritative after an ESP restart.
@@ -140,6 +142,7 @@ void MqttService::connectIfNeeded() {
     client_.subscribe(baudCommandTopic_.c_str());
     client_.subscribe(alarmCommandTopic_.c_str());
     client_.subscribe(bypassCommandTopic_.c_str());
+    client_.subscribe(zoneChimeCommandTopic_.c_str());
     client_.subscribe(sounderVolumeCommandTopic_.c_str());
     resetPublishTracking();
     state_.markAllForRepublish();
@@ -212,6 +215,40 @@ void MqttService::onMessage(char* topic, uint8_t* payload,
         if (zone <= 0 || zone >= Gc2State::kMaxZones || !valueKnown ||
             !bridge_.requestZoneBypass(static_cast<uint8_t>(zone), bypassed)) {
             Serial.print(F("[mqtt] Rejected zone bypass command: "));
+            Serial.println(message);
+        }
+        return;
+    }
+    if (strcmp(topic, zoneChimeCommandTopic_.c_str()) == 0) {
+        // {"zone":N,"mode":M}; mode 0-5 per the console's zone_chime help.
+        const int zoneKey = message.indexOf("\"zone\"");
+        const int zoneColon = zoneKey < 0 ? -1 : message.indexOf(':', zoneKey);
+        const int modeKey = message.indexOf("\"mode\"");
+        const int modeColon = modeKey < 0 ? -1 : message.indexOf(':', modeKey);
+        const int zone = zoneColon < 0 ? 0
+                                       : message.substring(zoneColon + 1).toInt();
+        int mode = -1;
+        if (modeColon >= 0) {
+            String value = message.substring(modeColon + 1);
+            value.trim();
+            if (!value.isEmpty() && isDigit(value[0])) mode = value.toInt();
+        }
+        if (zone <= 0 || zone >= Gc2State::kMaxZones || mode < 0 || mode > 5) {
+            Serial.print(F("[mqtt] Rejected zone chime command: "));
+            Serial.println(message);
+            return;
+        }
+        const Gc2ZoneSnapshot& current = state_.zone(static_cast<uint8_t>(zone));
+        if (current.chimeMode == mode) {
+            // The panel commits every zone_chime write to its settings flash
+            // even when the value is unchanged, so never send a no-op.
+            Serial.print(F("[mqtt] Zone chime already set; skipped: "));
+            Serial.println(message);
+            return;
+        }
+        if (!bridge_.requestZoneChime(static_cast<uint8_t>(zone),
+                                      static_cast<uint8_t>(mode))) {
+            Serial.print(F("[mqtt] Zone chime command could not be scheduled: "));
             Serial.println(message);
         }
         return;
@@ -506,7 +543,7 @@ bool MqttService::publishManifest() {
     payload += jsonEscape(rootTopic_);
     payload += F("\",\"bridge_firmware\":\"");
     payload += kFirmwareRelease;
-    payload += F("\",\"max_zones\":74,\"capabilities\":{\"alarm_control\":true,\"zone_bypass\":true,\"zone_inventory\":true,\"zone_battery\":true,\"zone_trouble\":true,\"panel_security\":true,\"alarm_memory\":true,\"observed_users\":true,\"uart_baud_control\":true,\"sounder_volume_control\":true}}");
+    payload += F("\",\"max_zones\":74,\"capabilities\":{\"alarm_control\":true,\"zone_bypass\":true,\"zone_inventory\":true,\"zone_battery\":true,\"zone_trouble\":true,\"panel_security\":true,\"alarm_memory\":true,\"observed_users\":true,\"uart_baud_control\":true,\"sounder_volume_control\":true,\"zone_chime_control\":true}}");
     if (!publishRetained("manifest", payload)) return false;
 
     // This stable discovery address lets Home Assistant offer the bridge even
@@ -979,6 +1016,10 @@ bool MqttService::publishZoneState(uint8_t zoneNumber) {
     payload += zone.enabled ? F("true") : F("false");
     payload += F(",\"input\":");
     payload += zone.input;
+    payload += F(",\"chime_known\":");
+    payload += zone.chimeMode >= 0 ? F("true") : F("false");
+    payload += F(",\"chime_mode\":");
+    payload += zone.chimeMode >= 0 ? zone.chimeMode : 0;
     payload += F(",\"bypass_known\":");
     payload += zone.bypassKnown ? F("true") : F("false");
     payload += F(",\"bypassed\":");

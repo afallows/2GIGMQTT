@@ -836,6 +836,19 @@ bool PanelBridge::requestZoneBypass(uint8_t zone, bool bypassed) {
     return beginProtectedCommand(action, command);
 }
 
+bool PanelBridge::requestZoneChime(uint8_t zone, uint8_t mode) {
+    // zone_chime <zone 0-74> <type>; type 0=none, 1=voice,
+    // 2=voice+dingdong, 3=loud dingdong, 4=voice+loud dingdong, 5=dingdong.
+    // The panel commits the zone record to its settings flash, so callers
+    // must only request a value that differs from the retained one.
+    if (zone == 0 || zone >= Gc2State::kMaxZones || mode > 5) return false;
+    char action[32];
+    char command[24];
+    snprintf(action, sizeof(action), "zone_chime_%02u_%u", zone, mode);
+    snprintf(command, sizeof(command), "zone_chime %u %u", zone, mode);
+    return beginProtectedCommand(action, command);
+}
+
 bool PanelBridge::requestSounderVolume(uint8_t percent) {
     if (percent > 100) return false;
     char action[24];
@@ -959,6 +972,14 @@ void PanelBridge::finishAlarmControl() {
     if (alarmCommandTransmitted_) {
         setAlarmCommandStatus("submitted",
                               "command sent; panel output confirmation pending");
+        if (alarmCommandAction_.startsWith("zone_chime_")) {
+            // The zone_chime echo is only a database transaction trace. The
+            // authoritative value is the "Ch" column of a fresh zone_info
+            // read, so pull the programming table forward instead of waiting
+            // for the normal six-hour refresh.
+            nextZoneMetadataPollAt_ =
+                millis() + 2 * AppConfig::kCommandIntervalMs;
+        }
     } else {
         setAlarmCommandStatus("failed", "command was not sent");
     }

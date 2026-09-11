@@ -57,6 +57,10 @@ struct Gc2ZoneSnapshot {
     String bypassType;
     String bypassOrigin = "unknown";
     Gc2ZoneKind kind = Gc2ZoneKind::Unknown;
+    // Programmed per-zone chime type from the zone_info "Ch" column
+    // (0=none, 1=voice, 2=voice+dingdong, 3=loud dingdong,
+    // 4=voice+loud dingdong, 5=dingdong). -1 until zone_info reports it.
+    int8_t chimeMode = -1;
     uint32_t rfId = 0;
     uint8_t rawStatus = 0;
     uint8_t rawStatusChange = 0;
@@ -105,7 +109,7 @@ class Gc2State {
                                  const String& voiceDescriptor,
                                  uint32_t rfId, bool enabled, uint8_t input,
                                  const String& decodedName,
-                                 Gc2ZoneKind kind);
+                                 Gc2ZoneKind kind, int chimeMode = -1);
     void recordAlarmState(const String& state,
                           const String& mode = String(),
                           const String& origin = String(), int user = -1,

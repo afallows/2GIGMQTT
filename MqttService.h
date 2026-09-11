@@ -47,6 +47,7 @@ class MqttService {
     String baudCommandTopic_;
     String alarmCommandTopic_;
     String bypassCommandTopic_;
+    String zoneChimeCommandTopic_;
     String sounderVolumeCommandTopic_;
     uint8_t discoveryStage_ = 0;
     uint16_t legacyCleanupStage_ = kLegacyCleanupCount;

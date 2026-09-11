@@ -633,10 +633,18 @@ bool Gc2ConsoleParser::parseZoneInfo(const String& line) {
     const bool enabled = tokens[physicalIndex + 4].toInt() != 0;
     const uint8_t input =
         static_cast<uint8_t>(tokens[physicalIndex + 5].toInt());
+    // Column order after RFid: En In CZ Ch Em Op Tx Eq. "Ch" is the
+    // programmed chime type written by the console's zone_chime command.
+    const String& chimeToken = tokens[physicalIndex + 7];
+    int chimeMode = -1;
+    if (!chimeToken.isEmpty() &&
+        isdigit(static_cast<unsigned char>(chimeToken[0]))) {
+        chimeMode = chimeToken.toInt();
+    }
     const String decodedName = ZoneVocabulary::decode(voiceDescriptor);
     state_.recordZoneConfiguration(
         zone, zoneType, voiceDescriptor, rfId, enabled, input, decodedName,
-        classifyZone(zoneType, decodedName));
+        classifyZone(zoneType, decodedName), chimeMode);
     return true;
 }
 

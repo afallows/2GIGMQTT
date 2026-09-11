@@ -1,6 +1,9 @@
 # Captured GC2 console data can contain private sensor and user activity.
 logs/
 
+# Personal Home Assistant dashboards (user IDs, site entity IDs). Never commit.
+home_assistant/private/
+
 # Home Assistant/Python development artifacts.
 __pycache__/
 *.py[cod]

@@ -347,17 +347,19 @@ void Gc2State::recordZoneName(uint8_t number, const String& name) {
 void Gc2State::recordZoneConfiguration(
     uint8_t number, const String& zoneType, const String& voiceDescriptor,
     uint32_t rfId, bool enabled, uint8_t input, const String& decodedName,
-    Gc2ZoneKind kind) {
+    Gc2ZoneKind kind, int chimeMode) {
     if (number >= kMaxZones) return;
     Gc2ZoneSnapshot& target = zones_[number];
     const bool active = number > 0 && enabled && input > 0;
+    const bool chimeKnown = chimeMode >= 0 && chimeMode <= 127;
     const bool changed = !target.metadataKnown || target.discovered != active ||
                          target.enabled != enabled || target.input != input ||
                          target.zoneType != zoneType ||
                          target.voiceDescriptor != voiceDescriptor ||
                          (rfId != 0 && target.rfId != rfId) ||
                          (!decodedName.isEmpty() && target.name != decodedName) ||
-                         (kind != Gc2ZoneKind::Unknown && target.kind != kind);
+                         (kind != Gc2ZoneKind::Unknown && target.kind != kind) ||
+                         (chimeKnown && target.chimeMode != chimeMode);
     target.metadataKnown = true;
     target.discovered = active;
     target.enabled = enabled;
@@ -367,6 +369,7 @@ void Gc2State::recordZoneConfiguration(
     if (rfId != 0) target.rfId = rfId;
     if (!decodedName.isEmpty()) target.name = decodedName;
     if (kind != Gc2ZoneKind::Unknown) target.kind = kind;
+    if (chimeKnown) target.chimeMode = static_cast<int8_t>(chimeMode);
     if (changed) {
         target.revision = newRevision();
         target.metadataRevision = newRevision();

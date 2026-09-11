@@ -23,6 +23,7 @@ class PanelBridge {
     String baudState() const;
     bool requestAlarmCommand(AlarmCommand command);
     bool requestZoneBypass(uint8_t zone, bool bypassed);
+    bool requestZoneChime(uint8_t zone, uint8_t mode);
     bool requestSounderVolume(uint8_t percent);
     String debugUnlockState() const;
     const String& alarmCommandAction() const { return alarmCommandAction_; }

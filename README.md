@@ -195,6 +195,7 @@ topic, topics resemble:
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/alarm_memory
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/set
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/bypass/set
+2gig/gc2/gc2_bridge_aabbccddeeff/panel/zone_chime/set
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/sounder_volume
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/sounder_volume/set
 2gig/gc2/gc2_bridge_aabbccddeeff/panel/command_status
@@ -273,7 +274,26 @@ Physical zone bypass uses `panel/bypass/set` with a non-retained JSON payload:
 `false` requests an unbypass. Only zones 1 through 74 are accepted. Each
 request waits for the shared persistent unlock if necessary, then maps to the
 panel's literal `bypass <zone>` or `unbypass <zone>` command. Stale retained
-alarm, bypass, and volume commands are deleted before the bridge subscribes.
+alarm, bypass, chime, and volume commands are deleted before the bridge
+subscribes.
+
+Per-zone chime type uses `panel/zone_chime/set` with a non-retained JSON
+payload:
+
+```json
+{"zone":2,"mode":0}
+```
+
+`mode` follows the console's `zone_chime` help: `0` none, `1` voice,
+`2` voice and ding-dong, `3` loud ding-dong, `4` voice and loud ding-dong,
+`5` ding-dong. The bridge sends the literal `zone_chime <zone> <mode>`
+command, which the panel commits to its settings flash. Each zone's current
+value is reported as `chime_known`/`chime_mode` in its retained state record,
+taken from the `Ch` column of `zone_info 1`. A request whose mode already
+matches the retained value is skipped without touching the panel, so repeated
+automations never cause needless flash writes. After a change is submitted the
+bridge pulls the next `zone_info 1` programming read forward so the new value
+is confirmed from the panel rather than from the command echo.
 
 Chime and announcement volume uses the GC2 console's normalized
 `sounder_volume 0-100` control. Publish an integer from `0` through `100` to
@@ -328,6 +348,9 @@ creates:
 - panel trouble, tamper, siren tamper, RF-jam, AC-loss, communication-failure,
   reset-required, and latched-alarm-memory binary sensors;
 - one physical bypass switch for every zone;
+- one chime-type selector for every zone (off, voice, ding-dong, and the
+  panel's combined variants), read back from the panel's zone programming
+  table and written through the console's `zone_chime` command;
 - confirmation-protected bypass and restore actions from dashboard Attention
   cards, matched to the correct bridge and zone number;
 - one fine-control volume slider from 0% through 100% and a dashboard-friendly
@@ -376,9 +399,9 @@ Zone device classes are conditioned as follows:
 | Glass break | `sound` (when supported by the panel metadata) |
 | Unclassified contact | `opening` |
 
-Home and Away arming, disarming, and bypass changes go to the actual GC2. The
-integration does not optimistically change state: it waits for the console to
-report what the panel really did. The ESP bridge maintains and periodically
+Home and Away arming, disarming, bypass, and zone-chime changes go to the
+actual GC2. The integration does not optimistically change state: it waits for
+the console to report what the panel really did. The ESP bridge maintains and periodically
 verifies debug access so allow-listed controls do not pay the full unlock delay
 for every action. An open zone continues to report open when physically
 bypassed; bypass is separate GC2 state.

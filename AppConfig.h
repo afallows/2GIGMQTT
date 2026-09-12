@@ -33,6 +33,14 @@ constexpr uint32_t kPanelStatusInitialDelayMs = 14000;
 constexpr uint32_t kPanelStatusRefreshMs = 60000;
 constexpr uint32_t kAlarmMemoryInitialDelayMs = 16000;
 constexpr uint32_t kAlarmMemoryRefreshMs = 5UL * 60UL * 1000UL;
+// Protected (unlock-supervised) MQTT commands that arrive while one is in
+// flight are queued and sent one per kCommandIntervalMs, so a burst such as a
+// two-zone chime automation is never dropped.
+constexpr size_t kMaxQueuedPanelCommands = 8;
+// A zone_chime write commits the panel's settings flash. After one is sent,
+// further writes to the same zone are refused for this long, which caps the
+// damage from an automation that repeats every minute.
+constexpr uint32_t kZoneChimeHoldoffMs = 5UL * 60UL * 1000UL;
 
 constexpr uint32_t kMqttReconnectDelayMs = 5000;
 constexpr uint32_t kMqttPublishIntervalMs = 25;

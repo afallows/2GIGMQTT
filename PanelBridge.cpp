@@ -842,11 +842,29 @@ bool PanelBridge::requestZoneChime(uint8_t zone, uint8_t mode) {
     // The panel commits the zone record to its settings flash, so callers
     // must only request a value that differs from the retained one.
     if (zone == 0 || zone >= Gc2State::kMaxZones || mode > 5) return false;
+    if (!deadlineReached(zoneChimeHoldoffUntil_[zone])) {
+        Serial.print(F("[panel] zone_chime refused for zone "));
+        Serial.print(zone);
+        Serial.println(F(": a write was sent recently; waiting for hold-off."));
+        return false;
+    }
     char action[32];
     char command[24];
     snprintf(action, sizeof(action), "zone_chime_%02u_%u", zone, mode);
     snprintf(command, sizeof(command), "zone_chime %u %u", zone, mode);
-    return beginProtectedCommand(action, command);
+    const bool accepted = beginProtectedCommand(action, command);
+    if (accepted) {
+        zoneChimeHoldoffUntil_[zone] = millis() + AppConfig::kZoneChimeHoldoffMs;
+    }
+    return accepted;
+}
+
+void PanelBridge::requestZoneMetadataRefresh() {
+    if (!panelReady()) return;
+    const uint32_t target = millis() + AppConfig::kCommandIntervalMs;
+    if (static_cast<int32_t>(nextZoneMetadataPollAt_ - target) > 0) {
+        nextZoneMetadataPollAt_ = target;
+    }
 }
 
 bool PanelBridge::requestSounderVolume(uint8_t percent) {
@@ -864,7 +882,32 @@ bool PanelBridge::requestSounderVolume(uint8_t percent) {
 
 bool PanelBridge::beginProtectedCommand(const String& action,
                                         const String& command) {
-    if (alarmControlPhase_ != AlarmControlPhase::Idle) return false;
+    if (alarmControlPhase_ != AlarmControlPhase::Idle) {
+        // Another protected command is in flight. Queue this one so a burst
+        // (two zone selects changed by one automation) is sent one per
+        // second instead of being dropped. Identical pending actions are
+        // collapsed.
+        for (const ProtectedCommand& pending : protectedQueue_) {
+            if (pending.action == action) return true;
+        }
+        if (protectedQueue_.size() >= AppConfig::kMaxQueuedPanelCommands) {
+            Serial.print(F("[panel] Command queue full; dropped "));
+            Serial.println(action);
+            return false;
+        }
+        protectedQueue_.push_back(ProtectedCommand{action, command});
+        Serial.print(F("[panel] Queued "));
+        Serial.print(action);
+        Serial.print(F(" behind "));
+        Serial.println(alarmCommandAction_);
+        sendClientStatus(String("MQTT panel action queued: ") + action + '.');
+        return true;
+    }
+    return startProtectedCommand(action, command);
+}
+
+bool PanelBridge::startProtectedCommand(const String& action,
+                                        const String& command) {
     alarmCommandAction_ = action;
     alarmCommandText_ = command;
     if (!panelReady()) {
@@ -895,10 +938,15 @@ bool PanelBridge::beginProtectedCommand(const String& action,
 }
 
 void PanelBridge::processAlarmControl() {
-    if (alarmControlPhase_ == AlarmControlPhase::Idle ||
-        !deadlineReached(nextAlarmControlActionAt_)) {
+    if (alarmControlPhase_ == AlarmControlPhase::Idle) {
+        if (!protectedQueue_.empty()) {
+            const ProtectedCommand next = protectedQueue_.front();
+            protectedQueue_.pop_front();
+            startProtectedCommand(next.action, next.command);
+        }
         return;
     }
+    if (!deadlineReached(nextAlarmControlActionAt_)) return;
 
     switch (alarmControlPhase_) {
         case AlarmControlPhase::Idle: return;

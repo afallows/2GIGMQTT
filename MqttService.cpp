@@ -6,7 +6,7 @@
 
 namespace {
 constexpr char kHomeAssistantStatusTopic[] = "homeassistant/status";
-constexpr char kFirmwareRelease[] = "0.9.0";
+constexpr char kFirmwareRelease[] = "0.9.1";
 constexpr char kTransportSchema[] = "gc2-mqtt-v1";
 constexpr char const* kBaseDiscoveryObjectIds[] = {
     "panel_state",   "battery_state", "battery_voltage",
@@ -239,6 +239,16 @@ void MqttService::onMessage(char* topic, uint8_t* payload,
             return;
         }
         const Gc2ZoneSnapshot& current = state_.zone(static_cast<uint8_t>(zone));
+        if (current.chimeMode < 0) {
+            // Without a read-back there is nothing to compare against, and a
+            // repeating automation would otherwise write flash every cycle.
+            // Refresh the zone table instead; the automation's next run will
+            // then be compared properly.
+            Serial.print(F("[mqtt] Zone chime read-back unknown; refreshing zone table instead of writing: "));
+            Serial.println(message);
+            bridge_.requestZoneMetadataRefresh();
+            return;
+        }
         if (current.chimeMode == mode) {
             // The panel commits every zone_chime write to its settings flash
             // even when the value is unchanged, so never send a no-op.

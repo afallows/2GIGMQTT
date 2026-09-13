@@ -842,29 +842,11 @@ bool PanelBridge::requestZoneChime(uint8_t zone, uint8_t mode) {
     // The panel commits the zone record to its settings flash, so callers
     // must only request a value that differs from the retained one.
     if (zone == 0 || zone >= Gc2State::kMaxZones || mode > 5) return false;
-    if (!deadlineReached(zoneChimeHoldoffUntil_[zone])) {
-        Serial.print(F("[panel] zone_chime refused for zone "));
-        Serial.print(zone);
-        Serial.println(F(": a write was sent recently; waiting for hold-off."));
-        return false;
-    }
     char action[32];
     char command[24];
     snprintf(action, sizeof(action), "zone_chime_%02u_%u", zone, mode);
     snprintf(command, sizeof(command), "zone_chime %u %u", zone, mode);
-    const bool accepted = beginProtectedCommand(action, command);
-    if (accepted) {
-        zoneChimeHoldoffUntil_[zone] = millis() + AppConfig::kZoneChimeHoldoffMs;
-    }
-    return accepted;
-}
-
-void PanelBridge::requestZoneMetadataRefresh() {
-    if (!panelReady()) return;
-    const uint32_t target = millis() + AppConfig::kCommandIntervalMs;
-    if (static_cast<int32_t>(nextZoneMetadataPollAt_ - target) > 0) {
-        nextZoneMetadataPollAt_ = target;
-    }
+    return beginProtectedCommand(action, command);
 }
 
 bool PanelBridge::requestSounderVolume(uint8_t percent) {

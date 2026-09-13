@@ -25,10 +25,6 @@ class PanelBridge {
     bool requestZoneBypass(uint8_t zone, bool bypassed);
     bool requestZoneChime(uint8_t zone, uint8_t mode);
     bool requestSounderVolume(uint8_t percent);
-    // Pull the next read-only zone_info programming read forward so a value
-    // the bridge has not yet observed (for example a zone's chime type after
-    // an ESP restart) becomes known without waiting for the periodic refresh.
-    void requestZoneMetadataRefresh();
     String debugUnlockState() const;
     const String& alarmCommandAction() const { return alarmCommandAction_; }
     const String& alarmCommandStatus() const { return alarmCommandStatus_; }
@@ -118,7 +114,6 @@ class PanelBridge {
         String command;
     };
     std::deque<ProtectedCommand> protectedQueue_;
-    uint32_t zoneChimeHoldoffUntil_[Gc2State::kMaxZones]{};
     AlarmControlPhase alarmControlPhase_ = AlarmControlPhase::Idle;
     String alarmCommandText_;
     String alarmCommandAction_ = "none";

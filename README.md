@@ -295,21 +295,11 @@ automations never cause needless flash writes. After a change is submitted the
 bridge pulls the next `zone_info 1` programming read forward so the new value
 is confirmed from the panel rather than from the command echo.
 
-Two further guards protect the panel's settings flash from automations that
-fire repeatedly (for example a Node-RED timer with "repeat output" enabled):
-
-- If the zone's chime value has not yet been read back (after an ESP restart,
-  before the first `zone_info 1` poll), the request is not written. The
-  bridge refreshes the zone table instead, so the next request can be
-  compared properly.
-- After a `zone_chime` write is sent, further writes to that zone are refused
-  for five minutes. Changing a zone's chime and changing it back within that
-  window therefore needs a second attempt later.
-
 Protected MQTT commands (alarm, bypass, chime, volume) that arrive while one
-is already in flight are queued, up to eight deep, and sent one per second.
-An automation that changes several zones at once is therefore carried out in
-full instead of only its first zone.
+is already in flight are queued, up to eight deep, and sent one at a time
+through the bridge's single command-pacing gate. An automation that changes
+several zones at once is therefore carried out in full instead of only its
+first zone.
 
 Chime and announcement volume uses the GC2 console's normalized
 `sounder_volume 0-100` control. Publish an integer from `0` through `100` to

@@ -33,6 +33,7 @@ constexpr uint32_t kPanelStatusInitialDelayMs = 14000;
 constexpr uint32_t kPanelStatusRefreshMs = 60000;
 constexpr uint32_t kAlarmMemoryInitialDelayMs = 16000;
 constexpr uint32_t kAlarmMemoryRefreshMs = 5UL * 60UL * 1000UL;
+constexpr size_t kMaxQueuedPanelCommands = 8;
 
 constexpr uint32_t kMqttReconnectDelayMs = 5000;
 constexpr uint32_t kMqttPublishIntervalMs = 25;

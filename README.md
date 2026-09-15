@@ -295,6 +295,12 @@ automations never cause needless flash writes. After a change is submitted the
 bridge pulls the next `zone_info 1` programming read forward so the new value
 is confirmed from the panel rather than from the command echo.
 
+Protected MQTT commands (alarm, bypass, chime, volume) that arrive while one
+is already in flight are queued, up to eight deep, and sent one at a time
+through the bridge's single command-pacing gate. An automation that changes
+several zones at once is therefore carried out in full instead of only its
+first zone.
+
 Chime and announcement volume uses the GC2 console's normalized
 `sounder_volume 0-100` control. Publish an integer from `0` through `100` to
 the non-retained `panel/sounder_volume/set` topic. The bridge sends only that

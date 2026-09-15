@@ -6,7 +6,7 @@
 
 namespace {
 constexpr char kHomeAssistantStatusTopic[] = "homeassistant/status";
-constexpr char kFirmwareRelease[] = "0.9.0";
+constexpr char kFirmwareRelease[] = "0.9.1";
 constexpr char kTransportSchema[] = "gc2-mqtt-v1";
 constexpr char const* kBaseDiscoveryObjectIds[] = {
     "panel_state",   "battery_state", "battery_voltage",

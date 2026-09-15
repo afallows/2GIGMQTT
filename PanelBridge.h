@@ -109,6 +109,11 @@ class PanelBridge {
     uint32_t nextSounderStatusPollAt_ = 0;
     uint32_t nextPanelStatusPollAt_ = 0;
     uint32_t nextAlarmMemoryPollAt_ = 0;
+    struct ProtectedCommand {
+        String action;
+        String command;
+    };
+    std::deque<ProtectedCommand> protectedQueue_;
     AlarmControlPhase alarmControlPhase_ = AlarmControlPhase::Idle;
     String alarmCommandText_;
     String alarmCommandAction_ = "none";
@@ -137,6 +142,7 @@ class PanelBridge {
     void processUnlockSupervisor();
     void processAlarmControl();
     bool beginProtectedCommand(const String& action, const String& command);
+    bool startProtectedCommand(const String& action, const String& command);
     void setAlarmCommandStatus(const String& status, const String& detail);
     void finishAlarmControl();
     bool attachPanelTx();

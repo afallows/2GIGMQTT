@@ -864,7 +864,32 @@ bool PanelBridge::requestSounderVolume(uint8_t percent) {
 
 bool PanelBridge::beginProtectedCommand(const String& action,
                                         const String& command) {
-    if (alarmControlPhase_ != AlarmControlPhase::Idle) return false;
+    if (alarmControlPhase_ != AlarmControlPhase::Idle) {
+        // Another protected command is in flight. Queue this one so a burst
+        // (two zone selects changed by one automation) is sent one per
+        // second instead of being dropped. Identical pending actions are
+        // collapsed.
+        for (const ProtectedCommand& pending : protectedQueue_) {
+            if (pending.action == action) return true;
+        }
+        if (protectedQueue_.size() >= AppConfig::kMaxQueuedPanelCommands) {
+            Serial.print(F("[panel] Command queue full; dropped "));
+            Serial.println(action);
+            return false;
+        }
+        protectedQueue_.push_back(ProtectedCommand{action, command});
+        Serial.print(F("[panel] Queued "));
+        Serial.print(action);
+        Serial.print(F(" behind "));
+        Serial.println(alarmCommandAction_);
+        sendClientStatus(String("MQTT panel action queued: ") + action + '.');
+        return true;
+    }
+    return startProtectedCommand(action, command);
+}
+
+bool PanelBridge::startProtectedCommand(const String& action,
+                                        const String& command) {
     alarmCommandAction_ = action;
     alarmCommandText_ = command;
     if (!panelReady()) {
@@ -895,10 +920,15 @@ bool PanelBridge::beginProtectedCommand(const String& action,
 }
 
 void PanelBridge::processAlarmControl() {
-    if (alarmControlPhase_ == AlarmControlPhase::Idle ||
-        !deadlineReached(nextAlarmControlActionAt_)) {
+    if (alarmControlPhase_ == AlarmControlPhase::Idle) {
+        if (!protectedQueue_.empty()) {
+            const ProtectedCommand next = protectedQueue_.front();
+            protectedQueue_.pop_front();
+            startProtectedCommand(next.action, next.command);
+        }
         return;
     }
+    if (!deadlineReached(nextAlarmControlActionAt_)) return;
 
     switch (alarmControlPhase_) {
         case AlarmControlPhase::Idle: return;

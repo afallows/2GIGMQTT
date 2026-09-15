@@ -84,12 +84,26 @@ class Gc2State {
     static constexpr uint8_t kMaxZones = 75;
     static constexpr uint8_t kMaxTroubles = 32;
     static constexpr size_t kMaxQueuedEvents = 32;
+    static constexpr size_t kMaxQueuedZoneTransitions = 64;
+
+    struct ZoneTransition {
+        uint8_t zone;
+        bool open;
+    };
 
     void notePanelLine(bool recognized);
     void recordZonePacket(uint8_t zone, uint32_t rfId, uint8_t status,
                           uint8_t statusChange, Gc2ZoneKind kind);
-    void recordZoneState(uint8_t zone, bool open);
+    // fromPoll marks the periodic `zones` read. A poll that disagrees with
+    // the live-tracked state means a live line was missed; that is counted.
+    void recordZoneState(uint8_t zone, bool open, bool fromPoll = false);
     void recordZoneBattery(uint8_t zone, bool low);
+    void recordZoneTamper(uint8_t zone, bool tampered);
+    void recordZoneSupervision(uint8_t zone, bool lost);
+    // Live trouble_memory_add / trouble_memory_restore lines carry the same
+    // description text as the polled trouble table.
+    void recordZoneTroubleLive(uint8_t zone, const String& description,
+                               bool active);
     void beginTroubleSnapshot();
     void recordTrouble(uint8_t slot, uint8_t zone, const String& device,
                        const String& description, bool active,
@@ -169,6 +183,11 @@ class Gc2State {
 
     bool peekEvent(String& event) const;
     void popEvent();
+    // Every zone open/close transition is queued in order so a fast
+    // open-then-close is published as two messages, never collapsed.
+    bool peekZoneTransition(ZoneTransition& transition) const;
+    void popZoneTransition();
+    uint32_t pollCorrectionCount() const { return pollCorrectionCount_; }
     void markAllForRepublish();
 
   private:
@@ -216,13 +235,16 @@ class Gc2State {
     uint32_t zwaveNoAckCount_ = 0;
     uint32_t zwaveMaxRetryCount_ = 0;
     uint32_t droppedEventCount_ = 0;
+    uint32_t pollCorrectionCount_ = 0;
     uint32_t diagnosticRevision_ = 0;
     uint32_t lastPanelLineMs_ = 0;
     uint32_t nextRevision_ = 1;
     std::deque<String> events_;
+    std::deque<ZoneTransition> zoneTransitions_;
 
     uint32_t newRevision();
     void queueEvent(const String& event);
+    void queueZoneTransition(uint8_t zone, bool open);
     void recordZoneTrouble(uint8_t zone, bool active, bool tamper,
                            bool supervisionLost, const String& summary);
 };

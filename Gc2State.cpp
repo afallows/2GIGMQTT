@@ -45,17 +45,48 @@ void Gc2State::recordZonePacket(uint8_t number, uint32_t rfId,
     target.revision = newRevision();
     if (metadataChanged) target.metadataRevision = newRevision();
 
-    // The GC2's normalized 345 MHz event byte uses bit 7 for the active/open
-    // condition and bit 3 for low battery. A supervisory packet therefore
-    // establishes current state even when no OPENED/RESTORED text followed it.
-    recordZoneState(number, (status & 0x80U) != 0);
+    // 345 MHz sensor status byte (bench-verified on this panel):
+    //   0x80 loop 1   0x20 loop 2   0x10 loop 3   0x40 tamper (cover)
+    //   0x08 low battery
+    // Which loop bit means "open" depends on the zone's programmed input
+    // (zone_info "In" column): a door on loop 2 reports A0 open / 80 closed
+    // because its unused loop 1 always reads open. Only that loop bit is
+    // trusted. Before zone_info has reported the input, fall back to the
+    // single loop bit the panel says changed; if none or several changed,
+    // leave the open/closed state to the explicit OPENED/RESTORED lines.
+    uint8_t loopMask = 0;
+    switch (target.input) {
+        case 1: loopMask = 0x80U; break;
+        case 2: loopMask = 0x20U; break;
+        case 3: loopMask = 0x10U; break;
+        default: {
+            const uint8_t changedLoops = statusChange & 0xB0U;
+            if (changedLoops != 0 &&
+                (changedLoops & (changedLoops - 1)) == 0) {
+                loopMask = changedLoops;
+            }
+            break;
+        }
+    }
+    if (loopMask != 0) recordZoneState(number, (status & loopMask) != 0);
     recordZoneBattery(number, (status & 0x08U) != 0);
+    // Keyfob slots carry button codes in this byte, so only decode the cover
+    // switch for zones programmed on a real sensor loop.
+    if (target.input >= 1 && target.input <= 3) {
+        recordZoneTamper(number, (status & 0x40U) != 0);
+    }
 }
 
-void Gc2State::recordZoneState(uint8_t number, bool open) {
+void Gc2State::recordZoneState(uint8_t number, bool open, bool fromPoll) {
     if (number == 0 || number >= kMaxZones) return;
     Gc2ZoneSnapshot& target = zones_[number];
     const bool changed = !target.stateKnown || target.open != open;
+    if (fromPoll && target.stateKnown && changed) {
+        // The 30 s `zones` read found a state the live lines never
+        // delivered. This is the direct measure of missed transitions.
+        ++pollCorrectionCount_;
+        diagnosticRevision_ = newRevision();
+    }
     target.discovered = true;
     target.stateKnown = true;
     target.open = open;
@@ -63,6 +94,7 @@ void Gc2State::recordZoneState(uint8_t number, bool open) {
     if (!changed) return;
 
     target.revision = newRevision();
+    queueZoneTransition(number, open);
     String event = F("{\"type\":\"zone\",\"zone\":");
     event += number;
     event += F(",\"state\":\"");
@@ -483,6 +515,78 @@ bool Gc2State::peekEvent(String& event) const {
 
 void Gc2State::popEvent() {
     if (!events_.empty()) events_.pop_front();
+}
+
+bool Gc2State::peekZoneTransition(ZoneTransition& transition) const {
+    if (zoneTransitions_.empty()) return false;
+    transition = zoneTransitions_.front();
+    return true;
+}
+
+void Gc2State::popZoneTransition() {
+    if (!zoneTransitions_.empty()) zoneTransitions_.pop_front();
+}
+
+void Gc2State::queueZoneTransition(uint8_t zone, bool open) {
+    if (zoneTransitions_.size() >= kMaxQueuedZoneTransitions) {
+        zoneTransitions_.pop_front();
+        ++droppedEventCount_;
+        diagnosticRevision_ = newRevision();
+    }
+    zoneTransitions_.push_back(ZoneTransition{zone, open});
+}
+
+void Gc2State::recordZoneTamper(uint8_t number, bool tampered) {
+    if (number == 0 || number >= kMaxZones) return;
+    Gc2ZoneSnapshot& target = zones_[number];
+    const bool changed = !target.troubleKnown || target.tamper != tampered;
+    target.discovered = true;
+    target.troubleKnown = true;
+    target.tamper = tampered;
+    target.troubleActive =
+        tampered || target.supervisionLost || target.batteryLow;
+    if (tampered && target.troubleSummary.isEmpty()) {
+        target.troubleSummary = F("Zone Tamper");
+    } else if (!tampered && target.troubleSummary == "Zone Tamper") {
+        target.troubleSummary = String();
+    }
+    if (!changed) return;
+
+    target.revision = newRevision();
+    String event = F("{\"type\":\"zone_tamper\",\"zone\":");
+    event += number;
+    event += F(",\"tampered\":");
+    event += tampered ? F("true") : F("false");
+    event += F(",\"uptime_ms\":");
+    event += millis();
+    event += '}';
+    queueEvent(event);
+}
+
+void Gc2State::recordZoneSupervision(uint8_t number, bool lost) {
+    if (number == 0 || number >= kMaxZones) return;
+    Gc2ZoneSnapshot& target = zones_[number];
+    const bool changed =
+        !target.troubleKnown || target.supervisionLost != lost;
+    target.discovered = true;
+    target.troubleKnown = true;
+    target.supervisionLost = lost;
+    target.troubleActive = lost || target.tamper || target.batteryLow;
+    if (changed) target.revision = newRevision();
+}
+
+void Gc2State::recordZoneTroubleLive(uint8_t number,
+                                     const String& description,
+                                     bool active) {
+    String lowercase = description;
+    lowercase.toLowerCase();
+    if (lowercase.indexOf("tamper") >= 0) {
+        recordZoneTamper(number, active);
+    } else if (lowercase.indexOf("low battery") >= 0) {
+        recordZoneBattery(number, active);
+    } else if (lowercase.indexOf("loss of supervision") >= 0) {
+        recordZoneSupervision(number, active);
+    }
 }
 
 void Gc2State::queueEvent(const String& event) {

@@ -35,6 +35,7 @@ class Gc2ConsoleParser {
     bool parseZonePacket(const String& line);
     bool parseZoneSnapshot(const String& line);
     bool parseZoneState(const String& line);
+    bool parseZoneEvent(const String& line);
     bool parseZoneTrouble(const String& line);
     bool parsePanelSecurity(const String& line);
     bool parseAlarmMemory(const String& line);

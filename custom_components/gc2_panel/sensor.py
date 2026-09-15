@@ -53,6 +53,9 @@ _SENSORS = (
     Gc2SensorSpec("zwave_no_ack", "Z-Wave no acknowledgement", lambda data: data.diagnostics.get("zwave_no_ack"), state_class=SensorStateClass.TOTAL_INCREASING),
     Gc2SensorSpec("zwave_max_retry", "Z-Wave maximum retries", lambda data: data.diagnostics.get("zwave_max_retry"), state_class=SensorStateClass.TOTAL_INCREASING),
     Gc2SensorSpec("dropped_events", "Dropped bridge events", lambda data: data.diagnostics.get("dropped_events"), state_class=SensorStateClass.TOTAL_INCREASING),
+    Gc2SensorSpec("uart_rx_errors", "UART receive errors", lambda data: data.diagnostics.get("uart_rx_errors"), state_class=SensorStateClass.TOTAL_INCREASING),
+    Gc2SensorSpec("mqtt_reconnects", "MQTT reconnects", lambda data: data.diagnostics.get("mqtt_reconnects"), state_class=SensorStateClass.TOTAL_INCREASING),
+    Gc2SensorSpec("poll_corrections", "Zone poll corrections", lambda data: data.diagnostics.get("poll_corrections"), state_class=SensorStateClass.TOTAL_INCREASING),
 )
 
 

@@ -26,6 +26,9 @@ class PanelBridge {
     bool requestZoneChime(uint8_t zone, uint8_t mode);
     bool requestSounderVolume(uint8_t percent);
     String debugUnlockState() const;
+    // UART driver overflow / buffer-full events since boot. Any non-zero
+    // value means panel bytes were lost.
+    uint32_t uartErrorCount() const { return uartErrorCount_; }
     const String& alarmCommandAction() const { return alarmCommandAction_; }
     const String& alarmCommandStatus() const { return alarmCommandStatus_; }
     const String& alarmCommandDetail() const { return alarmCommandDetail_; }
@@ -122,6 +125,7 @@ class PanelBridge {
     uint32_t alarmCommandRevision_ = 1;
     uint32_t nextAlarmControlActionAt_ = 0;
     bool alarmCommandTransmitted_ = false;
+    volatile uint32_t uartErrorCount_ = 0;
 
     void processBaudDetection();
     static bool validBaud(uint32_t baud);

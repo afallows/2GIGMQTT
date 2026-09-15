@@ -224,6 +224,33 @@ then conditions live RF packets and open/restore messages. A bypassed open
 sensor remains `ON`; the bridge never hides an open contact by reporting it
 closed.
 
+Every zone transition is taken from three independent console lines so a
+single lost line cannot leave a stale state: the sensor-layer RF packet
+(`SENSOR -- rf_id ... status`), the sensor-layer `Zone N OPENED/RESTORED`
+text, and the alarm engine's own `EVENT_ZONE_OPENED OPEN/CLOSE on zone N`.
+The RF status byte is decoded per zone: bit `0x80` is loop 1, `0x20` loop 2,
+`0x10` loop 3, `0x40` the cover tamper switch, and `0x08` low battery. Only
+the loop bit matching the zone's programmed input (the `In` column of
+`zone_info`) is treated as open/closed, because a door wired to loop 2 keeps
+its unused loop 1 bit set permanently. Each transition is queued and
+published in order, so a door that opens and closes within one publish cycle
+still reaches Home Assistant as `ON` followed by `OFF`. The 30-second `zones`
+poll remains the reconciliation source; every time it disagrees with the
+live-tracked state the `poll_corrections` diagnostic counter increments.
+
+Sensor tamper is tracked live from the packet bit and from the panel's
+`Zone N TAMPERED` / `TAMPER RESTORE` / `TAMPER DETECTED` / `TAMPER restored`
+lines, and live `trouble_memory_add` / `trouble_memory_restore` lines update a
+zone's tamper, low-battery, and supervision-loss fields the moment the panel
+records them instead of waiting for the next trouble-memory poll. Panel
+enclosure tamper is likewise updated from the live `PANEL TAMPER DETECTED` /
+`restored` lines.
+
+The `diagnostic` topic also reports `uart_rx_errors` (UART driver overflow
+events, which mean panel bytes were lost), `mqtt_reconnects`, and
+`poll_corrections`. The panel UART receive buffer is 32 KB, about 2.8 s of
+continuous output at 115200 baud.
+
 `panel/trouble` contains retained aggregate counts. Each populated
 `panel/trouble/NN` topic contains the GC2 trouble-memory slot, zone, description,
 active/restored state, acknowledgement state, and panel ticks. Empty slots are

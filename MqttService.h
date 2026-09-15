@@ -41,6 +41,8 @@ class MqttService {
     uint32_t nextConnectAt_ = 0;
     uint32_t nextPublishAt_ = 0;
     uint32_t nextDiagnosticAt_ = 0;
+    bool everConnected_ = false;
+    uint32_t reconnectCount_ = 0;
     String deviceId_;
     String rootTopic_;
     String availabilityTopic_;
@@ -99,7 +101,7 @@ class MqttService {
     bool publishTroubleEntry(uint8_t slot);
     bool publishPanelSecurityState();
     bool publishAlarmMemoryState();
-    bool publishZoneState(uint8_t zone);
+    bool publishZoneState(uint8_t zone, const bool* stateOverride = nullptr);
     bool publishDiagnostics();
     bool publishBaudState();
     bool publishRetained(const String& suffix, const String& payload);

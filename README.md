@@ -373,9 +373,10 @@ creates:
 - one `alarm_control_panel` for the physical GC2;
 - one `binary_sensor` for every active programmed zone, using the programmed
   name and appropriate device class;
-- one event entity for panel arming changes and one per zone for meaningful
-  activity; initial synchronization, reconnect recovery, and repeated
-  supervisory reads do not emit events;
+- one event entity for panel arming changes and enclosure tamper, and one per
+  zone for meaningful activity including sensor tamper and its restore;
+  initial synchronization, reconnect recovery, and repeated supervisory reads
+  do not emit events;
 - one diagnostic low-battery binary sensor for every zone;
 - zone trouble, tamper, and supervision-loss binary sensors;
 - panel trouble, tamper, siren tamper, RF-jam, AC-loss, communication-failure,

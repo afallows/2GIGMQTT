@@ -14,8 +14,16 @@ from .models import (
     PANEL_ACTIVITY_EVENT_TYPES,
     ZONE_ACTIVITY_EVENT_TYPES,
     panel_activity_transition,
+    tamper_transition,
     zone_activity_transition,
 )
+
+
+def _known_flag(source: dict[str, Any], known_key: str, key: str) -> bool | None:
+    """Return a boolean field only once the bridge has reported it."""
+    if not source.get(known_key, False):
+        return None
+    return bool(source.get(key, False))
 
 
 async def async_setup_entry(
@@ -64,16 +72,24 @@ class Gc2PanelActivity(Gc2ActivityEvent):
             f"{coordinator.root_topic.replace('/', '_')}_panel_activity"
         )
         self._previous_state = coordinator.data.panel_state
+        self._previous_tamper = _known_flag(
+            coordinator.data.security, "known", "panel_tamper"
+        )
 
     @callback
     def _handle_coordinator_update(self) -> None:
         current = self.coordinator.data.panel_state
         event_type = panel_activity_transition(self._previous_state, current)
         self._previous_state = current
-        if event_type is None:
-            return
-        self._trigger_event(event_type, {"state": current})
-        self.async_write_ha_state()
+        tamper = _known_flag(self.coordinator.data.security, "known", "panel_tamper")
+        tamper_event = tamper_transition(self._previous_tamper, tamper, "panel_")
+        self._previous_tamper = tamper
+        if event_type is not None:
+            self._trigger_event(event_type, {"state": current})
+        if tamper_event is not None:
+            self._trigger_event(tamper_event, {"state": current, "tamper": tamper})
+        if event_type is not None or tamper_event is not None:
+            self.async_write_ha_state()
 
 
 class Gc2ZoneActivity(Gc2ActivityEvent):
@@ -89,6 +105,7 @@ class Gc2ZoneActivity(Gc2ActivityEvent):
             f"{coordinator.root_topic.replace('/', '_')}_zone_{number:02d}_activity"
         )
         self._previous_state = self.zone.get("state")
+        self._previous_tamper = _known_flag(self.zone, "trouble_known", "tamper")
 
     @property
     def zone(self) -> dict[str, Any]:
@@ -104,14 +121,21 @@ class Gc2ZoneActivity(Gc2ActivityEvent):
         current = zone.get("state")
         event_type = zone_activity_transition(zone, self._previous_state, current)
         self._previous_state = current
-        if event_type is None:
+        tamper = _known_flag(zone, "trouble_known", "tamper")
+        tamper_event = tamper_transition(self._previous_tamper, tamper)
+        self._previous_tamper = tamper
+        if event_type is None and tamper_event is None:
             return
-        self._trigger_event(
-            event_type,
-            {
-                "zone": self.number,
-                "zone_name": self.name,
-                "state": current,
-            },
-        )
+        for fired in (event_type, tamper_event):
+            if fired is None:
+                continue
+            self._trigger_event(
+                fired,
+                {
+                    "zone": self.number,
+                    "zone_name": self.name,
+                    "state": current,
+                    "tamper": tamper,
+                },
+            )
         self.async_write_ha_state()

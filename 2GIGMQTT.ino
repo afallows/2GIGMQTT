@@ -177,6 +177,12 @@ void processFactoryResetButton() {
 
 void setup() {
     Serial.begin(115200);
+#if ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
+    // The USB CDC console blocks each write for up to 100 ms when a host is
+    // attached but not reading. That stall is long enough to overflow the
+    // panel UART buffer, so never wait on the debug console.
+    Serial.setTxTimeoutMs(0);
+#endif
     delay(250);
     Serial.println();
     Serial.println(F("GC2 UART Bridge starting"));

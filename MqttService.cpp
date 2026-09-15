@@ -6,7 +6,7 @@
 
 namespace {
 constexpr char kHomeAssistantStatusTopic[] = "homeassistant/status";
-constexpr char kFirmwareRelease[] = "0.9.1";
+constexpr char kFirmwareRelease[] = "0.9.2";
 constexpr char kTransportSchema[] = "gc2-mqtt-v1";
 constexpr char const* kBaseDiscoveryObjectIds[] = {
     "panel_state",   "battery_state", "battery_voltage",
@@ -124,6 +124,8 @@ void MqttService::connectIfNeeded() {
     }
 
     Serial.println(F("[mqtt] Connected."));
+    if (everConnected_) ++reconnectCount_;
+    everConnected_ = true;
     client_.publish(availabilityTopic_.c_str(), "online", true);
     // MQTT commands are intentionally transient. Remove a stale retained
     // command before subscribing; publishBaudState() will replace it with the
@@ -338,6 +340,22 @@ void MqttService::publishNext() {
 
     if (!manifestPublished_) {
         manifestPublished_ = publishManifest();
+        return;
+    }
+
+    // Zone open/close transitions go out first and in order. Each queued
+    // transition is published with the state it recorded, so an open that
+    // was already closed again by the time we get here still reaches Home
+    // Assistant as ON followed by OFF instead of one unchanged message.
+    Gc2State::ZoneTransition transition;
+    if (state_.peekZoneTransition(transition)) {
+        if (publishZoneState(transition.zone, &transition.open)) {
+            state_.popZoneTransition();
+            const Gc2ZoneSnapshot& zone = state_.zone(transition.zone);
+            if (zone.open == transition.open) {
+                publishedZoneRevision_[transition.zone] = zone.revision;
+            }
+        }
         return;
     }
 
@@ -1001,13 +1019,16 @@ bool MqttService::publishAlarmMemoryState() {
     return publishRetained("panel/alarm_memory", payload);
 }
 
-bool MqttService::publishZoneState(uint8_t zoneNumber) {
+bool MqttService::publishZoneState(uint8_t zoneNumber,
+                                   const bool* stateOverride) {
     const Gc2ZoneSnapshot& zone = state_.zone(zoneNumber);
     char number[3];
     snprintf(number, sizeof(number), "%02u", zoneNumber);
+    const bool open = stateOverride != nullptr ? *stateOverride : zone.open;
     String payload = F("{\"state\":\"");
-    payload += zone.stateKnown ? (zone.open ? F("ON") : F("OFF"))
-                               : F("UNKNOWN");
+    payload += (zone.stateKnown || stateOverride != nullptr)
+                   ? (open ? F("ON") : F("OFF"))
+                   : F("UNKNOWN");
     payload += F("\",\"name\":\"");
     payload += jsonEscape(zone.name);
     payload += F("\",\"zone_type\":\"");
@@ -1096,6 +1117,12 @@ bool MqttService::publishDiagnostics() {
     payload += state_.zwaveMaxRetryCount();
     payload += F(",\"dropped_events\":");
     payload += state_.droppedEventCount();
+    payload += F(",\"uart_rx_errors\":");
+    payload += bridge_.uartErrorCount();
+    payload += F(",\"mqtt_reconnects\":");
+    payload += reconnectCount_;
+    payload += F(",\"poll_corrections\":");
+    payload += state_.pollCorrectionCount();
     payload += F(",\"last_panel_line_ms\":");
     payload += state_.lastPanelLineMs();
     payload += F(",\"debug_unlock\":\"");

@@ -420,6 +420,12 @@ void PanelBridge::startPanelUart(uint32_t baud) {
     panel_.setTxBufferSize(AppConfig::kPanelTxBufferSize);
     panel_.begin(baud, SERIAL_8N1, AppConfig::kPanelRxPin,
                  -1);
+    // Count driver-level overflow so lost panel bytes are visible in the
+    // diagnostics instead of silently missing a zone transition. The
+    // callback runs on the UART event task; it only bumps a counter.
+    panel_.onReceiveError([this](hardwareSerial_error_t) {
+        ++uartErrorCount_;
+    });
 
     currentBaud_ = baud;
     baudState_ = BaudState::Ready;

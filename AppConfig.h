@@ -45,7 +45,9 @@ constexpr uint32_t kWifiConnectTimeoutMs = 30000;
 constexpr uint32_t kWifiReconnectIntervalMs = 30000;
 constexpr uint32_t kFactoryResetHoldMs = 10000;
 
-constexpr size_t kPanelRxBufferSize = 8192;
+// 32 KB is roughly 2.8 s of continuous console output at 115200 baud, enough
+// to ride out a blocking MQTT connect attempt without dropping panel bytes.
+constexpr size_t kPanelRxBufferSize = 32768;
 constexpr size_t kPanelTxBufferSize = 2048;
 constexpr size_t kMaxConsoleCommandLength = 255;
 constexpr size_t kMaxQueuedConsoleCommands = 8;

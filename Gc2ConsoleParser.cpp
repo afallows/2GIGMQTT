@@ -140,13 +140,13 @@ bool Gc2ConsoleParser::parseZoneSnapshot(const String& line) {
     // Output from the read-only `zones` command has a variable-width type
     // column followed by one of these fixed state words.
     if (line.indexOf(" CLOSED ") >= 0) {
-        state_.recordZoneState(static_cast<uint8_t>(zone), false);
+        state_.recordZoneState(static_cast<uint8_t>(zone), false, true);
         state_.recordZoneBypass(static_cast<uint8_t>(zone), false, 0,
                                 "snapshot", "panel");
         return true;
     }
     if (line.indexOf(" OPEN ") >= 0) {
-        state_.recordZoneState(static_cast<uint8_t>(zone), true);
+        state_.recordZoneState(static_cast<uint8_t>(zone), true, true);
         state_.recordZoneBypass(static_cast<uint8_t>(zone), false, 0,
                                 "snapshot", "panel");
         return true;
@@ -170,6 +170,29 @@ bool Gc2ConsoleParser::parseZoneState(const String& line) {
         return false;
     }
 
+    // Live sensor-layer lines:
+    //   sensors_handle_345MHz_sensor:  Zone 2 OPENED / RESTORED
+    //   sensors_handle_345MHz_pir:     Zone 9 OPENED / CLOSED
+    //   sensors_handle_345MHz_sensor:  Zone 2 TAMPERED / TAMPER RESTORE
+    //   alarm_handle_zone_tamper_or_lo: Zone 2 TAMPER DETECTED / restored
+    if (strcmp(state, "TAMPERED") == 0) {
+        state_.recordZoneTamper(static_cast<uint8_t>(zone), true);
+        return true;
+    }
+    if (strcmp(state, "TAMPER") == 0) {
+        String rest = line.substring(marker);
+        rest.toLowerCase();
+        if (rest.indexOf("restore") >= 0) {
+            state_.recordZoneTamper(static_cast<uint8_t>(zone), false);
+            return true;
+        }
+        if (rest.indexOf("detected") >= 0) {
+            state_.recordZoneTamper(static_cast<uint8_t>(zone), true);
+            return true;
+        }
+        return false;
+    }
+
     bool open = false;
     if (strcmp(state, "OPENED") == 0) {
         open = true;
@@ -182,6 +205,78 @@ bool Gc2ConsoleParser::parseZoneState(const String& line) {
     recentZone_ = static_cast<uint8_t>(zone);
     recentZoneAt_ = millis();
     return true;
+}
+
+bool Gc2ConsoleParser::parseZoneEvent(const String& line) {
+    // The alarm engine's own zone event, printed for every open and close
+    // independently of the sensor-layer lines above:
+    //   alarm_handle_zone_opened_or_cl:  EVENT_ZONE_OPENED  OPEN  on zone 2 while  READY
+    int marker = line.indexOf("EVENT_ZONE_OPENED");
+    if (marker >= 0) {
+        const int zoneAt = line.indexOf("on zone ", marker);
+        if (zoneAt < 0) return true;
+        const int zone = line.substring(zoneAt + 8).toInt();
+        if (zone <= 0 || zone >= Gc2State::kMaxZones) return true;
+        const String verb = line.substring(marker + 17, zoneAt);
+        if (verb.indexOf("OPEN") >= 0) {
+            state_.recordZoneState(static_cast<uint8_t>(zone), true);
+        } else if (verb.indexOf("CLOSE") >= 0) {
+            state_.recordZoneState(static_cast<uint8_t>(zone), false);
+        }
+        return true;
+    }
+
+    // Live trouble-memory changes for any zone, same description text as the
+    // polled table:
+    //   trouble_memory_add:  adding Zone 2 Zone Tamper to trouble memory 0
+    //   trouble_memory_restore:  restoring trouble Zone Tamper Zone 2
+    marker = line.indexOf("trouble_memory_add:");
+    if (marker >= 0) {
+        const int zoneAt = line.indexOf("adding Zone ", marker);
+        const int endAt = line.indexOf(" to trouble memory", marker);
+        if (zoneAt < 0 || endAt < zoneAt) return false;
+        const int zone = line.substring(zoneAt + 12).toInt();
+        int descriptionAt = zoneAt + 12;
+        while (descriptionAt < endAt && isDigit(line[descriptionAt])) {
+            ++descriptionAt;
+        }
+        String description = line.substring(descriptionAt, endAt);
+        description.trim();
+        if (zone > 0 && zone < Gc2State::kMaxZones) {
+            state_.recordZoneTroubleLive(static_cast<uint8_t>(zone),
+                                         description, true);
+        }
+        return true;
+    }
+    marker = line.indexOf("trouble_memory_restore:");
+    if (marker >= 0) {
+        const int descriptionAt = line.indexOf("restoring trouble ", marker);
+        const int zoneAt = line.lastIndexOf(" Zone ");
+        if (descriptionAt < 0 || zoneAt < descriptionAt) return false;
+        const int zone = line.substring(zoneAt + 6).toInt();
+        String description = line.substring(descriptionAt + 18, zoneAt);
+        description.trim();
+        if (zone > 0 && zone < Gc2State::kMaxZones) {
+            state_.recordZoneTroubleLive(static_cast<uint8_t>(zone),
+                                         description, false);
+        }
+        return true;
+    }
+
+    // Live panel (enclosure) tamper, otherwise only seen by the 60 s poll:
+    //   alarm_handle_panel_tamper:  PANEL TAMPER DETECTED / restored
+    marker = line.indexOf("PANEL TAMPER ");
+    if (marker >= 0 && line.indexOf("alarm_handle_panel_tamper:") >= 0) {
+        String rest = line.substring(marker + 13);
+        rest.toLowerCase();
+        if (rest.startsWith("detected")) {
+            state_.recordPanelSecurityField("panel_tamper", 1);
+        } else if (rest.startsWith("restored")) {
+            state_.recordPanelSecurityField("panel_tamper", 0);
+        }
+        return true;
+    }
+    return false;
 }
 
 bool Gc2ConsoleParser::parseZoneTrouble(const String& line) {
@@ -704,6 +799,7 @@ void Gc2ConsoleParser::processLine(const String& input) {
     if (!recognized) recognized = parseZonePacket(line);
     if (!recognized) recognized = parseZoneSnapshot(line);
     if (!recognized) recognized = parseZoneState(line);
+    if (!recognized) recognized = parseZoneEvent(line);
     if (!recognized) recognized = parseZoneTrouble(line);
     if (!recognized) recognized = parsePanelSecurity(line);
     if (!recognized) recognized = parseAlarmMemory(line);
@@ -737,7 +833,6 @@ void Gc2ConsoleParser::processLine(const String& input) {
     for (const char* knownNoise : {
              "panel_aux_output_enable:", "panel_handle_task_vote_change:",
              "sounder_play_phrase:", "Pop:", "ToPegMessage:",
-             "alarm_handle_zone_opened_or_cl:",
              "alarm_handle_ordinary_open_zon:", "zwave_"}) {
         if (line.indexOf(knownNoise) >= 0) {
             recognized = true;

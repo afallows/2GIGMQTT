@@ -11,13 +11,17 @@ _ZONE_TOPIC = re.compile(r"zone/(\d{2})/state$")
 _USER_TOPIC = re.compile(r"user/(\d{3})/state$")
 _TROUBLE_TOPIC = re.compile(r"panel/trouble/(\d{2})$")
 
-PANEL_ACTIVITY_EVENT_TYPES = (
+PANEL_STATE_EVENT_TYPES = (
     "disarmed",
     "arming",
     "armed_home",
     "armed_away",
     "pending",
     "triggered",
+)
+PANEL_ACTIVITY_EVENT_TYPES = PANEL_STATE_EVENT_TYPES + (
+    "panel_tampered",
+    "panel_tamper_restored",
 )
 ZONE_ACTIVITY_EVENT_TYPES = (
     "opened",
@@ -34,18 +38,33 @@ ZONE_ACTIVITY_EVENT_TYPES = (
     "glass_break",
     "active",
     "idle",
+    "tampered",
+    "tamper_restored",
 )
 
 
 def panel_activity_transition(previous: str, current: str) -> str | None:
     """Return a genuine panel transition, excluding initialization states."""
     if (
-        previous not in PANEL_ACTIVITY_EVENT_TYPES
-        or current not in PANEL_ACTIVITY_EVENT_TYPES
+        previous not in PANEL_STATE_EVENT_TYPES
+        or current not in PANEL_STATE_EVENT_TYPES
         or previous == current
     ):
         return None
     return current
+
+
+def tamper_transition(
+    previous: bool | None, current: bool | None, prefix: str = ""
+) -> str | None:
+    """Describe a tamper change once both sides are known; None otherwise.
+
+    The first report after startup (previous unknown) is not an event, so a
+    bridge or Home Assistant restart never logs a tamper that did not happen.
+    """
+    if previous is None or current is None or previous == current:
+        return None
+    return f"{prefix}tampered" if current else f"{prefix}tamper_restored"
 
 
 def zone_activity_transition(

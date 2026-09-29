@@ -3,10 +3,9 @@
 `gc2_security_dashboard.yaml` is a complete Lovelace raw configuration built
 around the entities created by the `gc2_panel` custom integration.
 
-`full_dashboard_with_gc2_security.yaml` is the user's complete existing Home
-Assistant dashboard with the same Security view and card templates already
-merged. Paste that file into the raw configuration editor when replacing the
-whole dashboard.
+Keep personal, household-specific dashboards in `home_assistant/private/`,
+which is git-ignored, so entity IDs, people, and devices never reach the
+public repository.
 
 ## What it does
 
@@ -51,8 +50,7 @@ browser after installing them.
 2. Open the new dashboard, select **Edit dashboard**, then open the three-dot
    menu and choose **Raw configuration editor**.
 3. Replace the raw configuration with the contents of
-   `gc2_security_dashboard.yaml` and save. To retain the supplied existing
-   dashboard pages, use `full_dashboard_with_gc2_security.yaml` instead.
+   `gc2_security_dashboard.yaml` and save.
 4. Refresh the page once so the custom cards load.
 
 The view preserves the two Home Assistant user IDs from the previous YAML. Use

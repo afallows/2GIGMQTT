@@ -86,6 +86,8 @@ class PanelBridge {
     UnlockPhase unlockPhase_ = UnlockPhase::NotStarted;
     uint32_t nextUnlockActionAt_ = 0;
     uint32_t lastPanelCommandAt_ = 0;
+    uint32_t lastPanelRxAt_ = 0;
+    uint32_t pollBackoffUntil_ = 0;
     uint8_t identityAttempts_ = 0;
     uint8_t unlockAttempts_ = 0;
     uint8_t unlockVerificationAttempts_ = 0;
@@ -124,7 +126,11 @@ class PanelBridge {
     String alarmCommandDetail_;
     uint32_t alarmCommandRevision_ = 1;
     uint32_t nextAlarmControlActionAt_ = 0;
+    uint32_t alarmControlStartedAt_ = 0;
     bool alarmCommandTransmitted_ = false;
+    uint32_t clientConnectedAt_ = 0;
+    uint32_t clientBlockedSince_ = 0;
+    uint32_t clientDroppedBytes_ = 0;
     volatile uint32_t uartErrorCount_ = 0;
 
     void processBaudDetection();
@@ -149,6 +155,7 @@ class PanelBridge {
     bool startProtectedCommand(const String& action, const String& command);
     void setAlarmCommandStatus(const String& status, const String& detail);
     void finishAlarmControl();
+    void abortAlarmControl(const String& reason);
     bool attachPanelTx();
     void releasePanelTx();
     bool sendPanelCommand(const String& command);
@@ -168,6 +175,9 @@ class PanelBridge {
     void processManualCommandQueue();
     bool processLocalCommand(const String& command);
     void scheduleAutomaticUnlock();
+    void configureClientSocket();
+    bool clientWrite(const uint8_t* data, size_t length);
+    bool clientPrint(const String& text);
     void writePanelDataToClient(const uint8_t* data, size_t length);
     void sendClientStatus(const String& message);
     void sendConnectionBanner();

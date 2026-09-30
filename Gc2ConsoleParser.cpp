@@ -542,15 +542,19 @@ bool Gc2ConsoleParser::parseZoneBypass(const String& line) {
         return true;
     }
 
-    // Different firmware builds use both "unbypass" and "unbypassing" in
-    // their diagnostic names. Do not clear a bypass on an ordinary sensor
-    // restore; wait for an explicit bypass-clearing line.
+    // Only "unbypassing zone N" reports a bypass actually being cleared. Every
+    // disarm also prints "COMMAND_PANEL_PSEUDO_UNBYPASS_ZONE 9" (and 15) for
+    // zones that were never bypassed, and an unbypass of an unbypassed zone
+    // prints "warning -- zone N is not bypassed"; neither is a user action,
+    // and the periodic zones poll reconciles any real automatic change.
     String lowercase = line;
     lowercase.toLowerCase();
     if (lowercase.indexOf("unbypass") >= 0) {
-        const int zoneMarker = lowercase.indexOf("zone ");
+        const int zoneMarker = lowercase.indexOf("unbypassing zone ");
         if (zoneMarker >= 0) {
-            const int zone = lowercase.substring(zoneMarker + 5).toInt();
+            const int zone =
+                lowercase.substring(zoneMarker + strlen("unbypassing zone "))
+                    .toInt();
             if (zone > 0 && zone < Gc2State::kMaxZones) {
                 const String origin = consumeBridgeCommand("unbypass_")
                                           ? String("bridge_mqtt")

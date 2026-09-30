@@ -4,6 +4,7 @@
 
 #include <driver/uart.h>
 #include <esp_idf_version.h>
+#include <lwip/sockets.h>
 
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 5, 0)
 #error "GC2 Bridge requires Arduino-ESP32 3.3.x (ESP-IDF 5.5) or newer."
@@ -378,6 +379,7 @@ void PanelBridge::restartBaudDetection() {
         panel_.end();
     }
     pinMode(AppConfig::kPanelTxPin, INPUT);
+    abortAlarmControl("panel UART restarted");
     currentBaud_ = 0;
     baudState_ = BaudState::RetryDelay;
     baudStateStartedAt_ = millis() - AppConfig::kBaudRetryDelayMs;
@@ -416,6 +418,7 @@ void PanelBridge::startPanelUart(uint32_t baud) {
         panel_.end();
     }
     pinMode(AppConfig::kPanelTxPin, INPUT);
+    abortAlarmControl("panel UART restarted");
     panel_.setRxBufferSize(AppConfig::kPanelRxBufferSize);
     panel_.setTxBufferSize(AppConfig::kPanelTxBufferSize);
     panel_.begin(baud, SERIAL_8N1, AppConfig::kPanelRxPin,
@@ -458,6 +461,7 @@ void PanelBridge::processPanelInput() {
     while (panel_.available() > 0) {
         const int count = panel_.read(input, sizeof(input));
         if (count <= 0) break;
+        lastPanelRxAt_ = millis();
         for (int index = 0; index < count; ++index) {
             processPanelByte(input[index]);
         }
@@ -496,6 +500,15 @@ void PanelBridge::inspectPanelLine(const String& line) {
     }
     if (line.indexOf("ALARM_MEMORY_UPDATED") >= 0) {
         nextAlarmMemoryPollAt_ = millis();
+    }
+    if (line.indexOf("UI TIMER lag") >= 0) {
+        // The panel's UI task is running behind; sustained load from here is
+        // what ends in a data abort and reboot. Stop optional polling.
+        if (deadlineReached(pollBackoffUntil_)) {
+            Serial.println(F("[panel] UI task lag reported; pausing read-only polls."));
+            sendClientStatus("Panel reported UI task lag; read-only polling paused for 60 seconds.");
+        }
+        pollBackoffUntil_ = millis() + AppConfig::kPanelLagBackoffMs;
     }
 
     String lowercase = line;
@@ -576,8 +589,17 @@ bool PanelBridge::sendPanelCommand(const String& command) {
 }
 
 bool PanelBridge::sendBridgeCommand(const String& command) {
+    const uint32_t sinceCommand = millis() - lastPanelCommandAt_;
     if (txMode_ == TxMode::Passive || !panelReady() ||
-        millis() - lastPanelCommandAt_ < AppConfig::kCommandIntervalMs) {
+        sinceCommand < AppConfig::kCommandIntervalMs) {
+        return false;
+    }
+    // Let the previous reply (or unsolicited output) finish first. A console
+    // that never pauses must not block commands forever, so give up waiting
+    // for silence after kPanelQuietMaxWaitMs.
+    if (millis() - lastPanelRxAt_ < AppConfig::kPanelQuietBeforeCommandMs &&
+        sinceCommand < AppConfig::kCommandIntervalMs +
+                           AppConfig::kPanelQuietMaxWaitMs) {
         return false;
     }
     if (!attachPanelTx()) return false;
@@ -601,6 +623,12 @@ void PanelBridge::processMonitorPolling() {
         (unlockPhase_ != UnlockPhase::NotStarted &&
          unlockPhase_ != UnlockPhase::Complete &&
          unlockPhase_ != UnlockPhase::Failed)) {
+        return;
+    }
+    // One read-only poll per spacing window, never a burst, and none while
+    // the panel reports UI lag.
+    if (millis() - lastPanelCommandAt_ < AppConfig::kMonitorPollSpacingMs ||
+        !deadlineReached(pollBackoffUntil_)) {
         return;
     }
 
@@ -907,6 +935,7 @@ bool PanelBridge::startProtectedCommand(const String& action,
         return false;
     }
     alarmCommandTransmitted_ = false;
+    alarmControlStartedAt_ = millis();
     if (unlockPhase_ == UnlockPhase::Complete && debugLockState_ == 2) {
         alarmControlPhase_ = AlarmControlPhase::SendCommand;
         nextAlarmControlActionAt_ = millis();
@@ -934,13 +963,24 @@ void PanelBridge::processAlarmControl() {
         }
         return;
     }
+    if (alarmControlPhase_ != AlarmControlPhase::WaitCommand &&
+        millis() - alarmControlStartedAt_ >=
+            AppConfig::kAlarmControlTimeoutMs) {
+        abortAlarmControl("timed out waiting for debug access or transmission");
+        return;
+    }
     if (!deadlineReached(nextAlarmControlActionAt_)) return;
 
     switch (alarmControlPhase_) {
         case AlarmControlPhase::Idle: return;
 
         case AlarmControlPhase::Unlocking:
-            if (unlockPhase_ == UnlockPhase::Complete) {
+            if (unlockPhase_ == UnlockPhase::NotStarted) {
+                // The panel re-locked (or the sequence was reset) while this
+                // command waited. The unlock supervisor stands down while a
+                // command is in flight, so restart the sequence from here.
+                scheduleAutomaticUnlock();
+            } else if (unlockPhase_ == UnlockPhase::Complete) {
                 if (debugLockState_ == 2) {
                     alarmControlPhase_ = AlarmControlPhase::SendCommand;
                     setAlarmCommandStatus("sending", "debug unlock verified");
@@ -1024,6 +1064,26 @@ void PanelBridge::finishAlarmControl() {
     alarmCommandText_ = String();
 }
 
+void PanelBridge::abortAlarmControl(const String& reason) {
+    const size_t queued = protectedQueue_.size();
+    protectedQueue_.clear();
+    if (alarmControlPhase_ != AlarmControlPhase::Idle) {
+        releasePanelTx();
+        alarmControlPhase_ = AlarmControlPhase::Idle;
+        nextAlarmControlActionAt_ = 0;
+        setAlarmCommandStatus("failed", reason);
+        alarmCommandText_ = String();
+    }
+    if (queued > 0) {
+        Serial.print(F("[panel] Discarded "));
+        Serial.print(queued);
+        Serial.print(F(" queued action(s): "));
+        Serial.println(reason);
+        sendClientStatus(String("Discarded ") + queued +
+                         " queued MQTT panel action(s): " + reason + '.');
+    }
+}
+
 String PanelBridge::debugUnlockState() const {
     if (debugLockState_ == 2 && unlockPhase_ == UnlockPhase::Complete) {
         return F("unlocked");
@@ -1040,6 +1100,21 @@ String PanelBridge::debugUnlockState() const {
 void PanelBridge::processServer() {
     if (!networkReady_ || !serverStarted_) return;
     acceptClient();
+    if (client_ && clientAuthState_ == ClientAuthState::AwaitingPassword &&
+        millis() - clientConnectedAt_ >= AppConfig::kTelnetAuthTimeoutMs) {
+        clientPrint(F("\r\nLogin timed out.\r\n"));
+        Serial.println(F("[telnet] Client did not authenticate in time."));
+        disconnectClient();
+        return;
+    }
+    if (client_ && clientBlockedSince_ != 0 &&
+        millis() - clientBlockedSince_ >= AppConfig::kTelnetStalledClientMs) {
+        Serial.print(F("[telnet] Client stopped accepting data; disconnecting after "));
+        Serial.print(clientDroppedBytes_);
+        Serial.println(F(" dropped bytes."));
+        disconnectClient();
+        return;
+    }
     processTelnetInput();
 }
 
@@ -1055,7 +1130,10 @@ void PanelBridge::acceptClient() {
     }
 
     client_ = candidate;
-    client_.setNoDelay(true);
+    configureClientSocket();
+    clientConnectedAt_ = millis();
+    clientBlockedSince_ = 0;
+    clientDroppedBytes_ = 0;
     clientAuthState_ = ClientAuthState::AwaitingPassword;
     failedPasswordAttempts_ = 0;
     telnetParseState_ = TelnetParseState::Data;
@@ -1067,6 +1145,8 @@ void PanelBridge::acceptClient() {
 void PanelBridge::disconnectClient() {
     if (client_) client_.stop();
     clientAuthState_ = ClientAuthState::Disconnected;
+    clientBlockedSince_ = 0;
+    clientDroppedBytes_ = 0;
     telnetLine_ = String();
     commandQueue_.clear();
 }
@@ -1078,8 +1158,58 @@ void PanelBridge::sendConnectionBanner() {
         kTelnetIac, kTelnetWill, kTelnetSuppressGoAhead,
         kTelnetIac, kTelnetDo, kTelnetSuppressGoAhead,
     };
-    client_.write(negotiation, sizeof(negotiation));
-    client_.print(F("\r\nGC2 UART Bridge\r\nPassword: "));
+    clientWrite(negotiation, sizeof(negotiation));
+    clientPrint(F("\r\nGC2 UART Bridge\r\nPassword: "));
+}
+
+void PanelBridge::configureClientSocket() {
+    client_.setNoDelay(true);
+    // Detect a peer that vanished without closing (laptop asleep, Wi-Fi
+    // dropped) in about a minute instead of TCP's multi-hour default.
+    const int enable = 1;
+    client_.setSocketOption(SOL_SOCKET, SO_KEEPALIVE, &enable, sizeof(enable));
+#ifdef TCP_KEEPIDLE
+    const int idle = AppConfig::kTelnetKeepAliveIdleSeconds;
+    const int interval = AppConfig::kTelnetKeepAliveIntervalSeconds;
+    const int count = AppConfig::kTelnetKeepAliveCount;
+    client_.setSocketOption(IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    client_.setSocketOption(IPPROTO_TCP, TCP_KEEPINTVL, &interval,
+                            sizeof(interval));
+    client_.setSocketOption(IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+#endif
+}
+
+bool PanelBridge::clientWrite(const uint8_t* data, size_t length) {
+    // WiFiClient::write retries a full socket for up to ten seconds per call,
+    // which would stall UART draining behind a slow or vanished client. Send
+    // without blocking instead; whatever does not fit is dropped and counted.
+    if (!client_ || length == 0) return false;
+    const int socket = client_.fd();
+    if (socket < 0) return false;
+
+    const int sent = send(socket, data, length, MSG_DONTWAIT);
+    if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        disconnectClient();
+        return false;
+    }
+    const size_t accepted = sent > 0 ? static_cast<size_t>(sent) : 0;
+    if (accepted == length) {
+        if (clientBlockedSince_ != 0) {
+            clientBlockedSince_ = 0;
+            Serial.print(F("[telnet] Client recovered; "));
+            Serial.print(clientDroppedBytes_);
+            Serial.println(F(" bytes were dropped while it was not reading."));
+        }
+        return true;
+    }
+    if (clientBlockedSince_ == 0) clientBlockedSince_ = millis();
+    clientDroppedBytes_ += length - accepted;
+    return false;
+}
+
+bool PanelBridge::clientPrint(const String& text) {
+    return clientWrite(reinterpret_cast<const uint8_t*>(text.c_str()),
+                       text.length());
 }
 
 void PanelBridge::processTelnetInput() {
@@ -1156,7 +1286,7 @@ void PanelBridge::processTelnetData(uint8_t value) {
         if (!telnetLine_.isEmpty()) {
             telnetLine_.remove(telnetLine_.length() - 1);
             if (clientAuthState_ == ClientAuthState::Authenticated) {
-                client_.print(F("\b \b"));
+                clientPrint(F("\b \b"));
             }
         }
         return;
@@ -1169,7 +1299,7 @@ void PanelBridge::processTelnetData(uint8_t value) {
 
     telnetLine_ += static_cast<char>(value);
     if (clientAuthState_ == ClientAuthState::Authenticated) {
-        client_.write(value);
+        clientWrite(&value, 1);
     }
 }
 
@@ -1185,7 +1315,7 @@ void PanelBridge::finishTelnetLine() {
         if (accepted) {
             clientAuthState_ = ClientAuthState::Authenticated;
             failedPasswordAttempts_ = 0;
-            client_.print(F("\r\nAccess granted.\r\n"));
+            clientPrint(F("\r\nAccess granted.\r\n"));
             sendClientStatus(panelReady()
                                  ? String("UART ready at ") + currentBaud_ +
                                        " baud."
@@ -1197,11 +1327,10 @@ void PanelBridge::finishTelnetLine() {
                           ? "Monitor mode is active; debug access is supervised."
                           : "Maintenance transmission is enabled.");
         } else if (++failedPasswordAttempts_ >= 3) {
-            client_.print(F("\r\nToo many failed attempts.\r\n"));
-            delay(20);
+            clientPrint(F("\r\nToo many failed attempts.\r\n"));
             disconnectClient();
         } else {
-            client_.print(F("\r\nIncorrect password.\r\nPassword: "));
+            clientPrint(F("\r\nIncorrect password.\r\nPassword: "));
         }
         return;
     }
@@ -1211,7 +1340,7 @@ void PanelBridge::finishTelnetLine() {
         return;
     }
 
-    client_.print(F("\r\n"));
+    clientPrint(F("\r\n"));
     if (telnetLine_.isEmpty()) return;
 
     if (processLocalCommand(telnetLine_)) {
@@ -1239,6 +1368,7 @@ bool PanelBridge::processLocalCommand(const String& command) {
     if (normalized == "/listen on" || normalized == "/mode passive") {
         txMode_ = TxMode::Passive;
         commandQueue_.clear();
+        abortAlarmControl("strict passive mode enabled");
         releasePanelTx();
         sendClientStatus(
             "Listen-only mode enabled; all UART transmissions are blocked.");
@@ -1351,13 +1481,13 @@ void PanelBridge::writePanelDataToClient(const uint8_t* data, size_t length) {
     size_t outputLength = 0;
     for (size_t index = 0; index < length; ++index) {
         if (outputLength >= sizeof(encoded) - 2) {
-            client_.write(encoded, outputLength);
+            clientWrite(encoded, outputLength);
             outputLength = 0;
         }
         encoded[outputLength++] = data[index];
         if (data[index] == kTelnetIac) encoded[outputLength++] = kTelnetIac;
     }
-    if (outputLength > 0) client_.write(encoded, outputLength);
+    if (outputLength > 0) clientWrite(encoded, outputLength);
 }
 
 void PanelBridge::sendClientStatus(const String& message) {
@@ -1365,7 +1495,5 @@ void PanelBridge::sendClientStatus(const String& message) {
         clientAuthState_ != ClientAuthState::Authenticated) {
         return;
     }
-    client_.print(F("\r\n[bridge] "));
-    client_.print(message);
-    client_.print(F("\r\n"));
+    clientPrint(String(F("\r\n[bridge] ")) + message + F("\r\n"));
 }

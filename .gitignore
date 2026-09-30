@@ -3,6 +3,10 @@ logs/
 
 # Personal Home Assistant dashboards (user IDs, site entity IDs). Never commit.
 home_assistant/private/
+home_assistant/Dashboard.*.yaml
+home_assistant/home_dashboard_*.yaml
+home_assistant/build_*.ps1
+home_assistant/test_household_hero.cjs
 
 # Home Assistant/Python development artifacts.
 __pycache__/

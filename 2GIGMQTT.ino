@@ -49,6 +49,7 @@ void startSavedWifiConnection() {
 
 void announceNetworkReady() {
     provisioningPortal.stop();
+    WiFi.setTxPower(AppConfig::kWifiTxPower);
     networkState = NetworkState::Connected;
     networkStateStartedAt = millis();
     panelBridge.setNetworkReady(true);
@@ -176,6 +177,9 @@ void processFactoryResetButton() {
 }  // namespace
 
 void setup() {
+    // 80 MHz is the lowest clock Wi-Fi supports and is ample for the bridge;
+    // it lowers the current drawn from the panel's console header.
+    setCpuFrequencyMhz(AppConfig::kCpuFrequencyMhz);
     Serial.begin(115200);
 #if ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
     // The USB CDC console blocks each write for up to 100 ms when a host is

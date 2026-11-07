@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <WiFi.h>
 
 namespace AppConfig {
 
@@ -60,6 +61,12 @@ constexpr uint32_t kMqttPublishIntervalMs = 25;
 constexpr uint32_t kMqttDiagnosticIntervalMs = 60000;
 constexpr uint16_t kMqttBufferSize = 2048;
 constexpr uint16_t kMqttSocketTimeoutSeconds = 2;
+
+// The bridge is powered from the panel's console header; Wi-Fi transmit
+// bursts at full power can dip the panel's supply. 11 dBm keeps transmit
+// current spikes well below the ~20 dBm default.
+constexpr wifi_power_t kWifiTxPower = WIFI_POWER_11dBm;
+constexpr uint32_t kCpuFrequencyMhz = 80;
 
 constexpr uint32_t kWifiConnectTimeoutMs = 30000;
 constexpr uint32_t kWifiReconnectIntervalMs = 30000;

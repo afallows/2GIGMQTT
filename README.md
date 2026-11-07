@@ -56,9 +56,9 @@ connector remains on GPIO19/GPIO20. GPIO0 remains the BOOT/factory-reset
 button, and GPIO21 drives the onboard WS2812 RGB status LED.
 
 The status LED is solid red when the bridge has not been provisioned. After
-Wi-Fi, bridge-password, and MQTT settings have been saved, it flashes blue at
-500 ms intervals. The blue indication means settings are provisioned; it does
-not by itself guarantee that Wi-Fi or MQTT is currently connected.
+Wi-Fi, bridge-password, and MQTT settings have been saved it stays off, which
+saves power drawn from the panel. The dark LED means settings are provisioned;
+it does not by itself guarantee that Wi-Fi or MQTT is currently connected.
 
 The ESP32-S3 pins are **3.3 V only**. Verify the panel header voltage before
 connecting it. Never connect RS-232 or 5 V signaling directly to the board.
